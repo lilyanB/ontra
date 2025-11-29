@@ -38,16 +38,6 @@ contract OntraHook is BaseHook, IOntra {
     mapping(bytes32 => uint256) _loanShares; // loanHash => shares
     mapping(bytes32 => uint256) _tickShares; // tickHash => shares
 
-    // Track user positions managed by the hook
-    struct Position {
-        uint128 liquidity;
-        uint256 token0Deposited;
-        uint256 token1Deposited;
-        bool isInRange; // true if liquidity is in PoolManager, false if in Aave
-    }
-
-    mapping(bytes32 => Position) public positions; // positionId => Position
-
     struct CallbackData {
         address sender;
         PoolKey key;

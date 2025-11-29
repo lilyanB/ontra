@@ -75,13 +75,14 @@ contract TestRemoveLiquidity is OntraHookFixture {
         assertGt(aaveBalanceBefore, 0);
 
         // Calculate liquidity for the amount deposited
+        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
         uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint128 liquidityToRemove = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, amount1Desired
-        );
 
-        // Now remove liquidity using the hook
+        uint128 liquidityToRemove =
+            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
+
+        // Now remove half liquidity using the hook
         hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove / 2);
 
         // Verify funds were withdrawn from Aave
@@ -110,13 +111,13 @@ contract TestRemoveLiquidity is OntraHookFixture {
         assertGt(aaveBalanceBefore, 0);
 
         // Calculate liquidity for the amount deposited
+        // When position is below current price (all in token0), use getLiquidityForAmount0 directly
         uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint128 liquidityToRemove = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96Upper, sqrtPriceX96Lower, sqrtPriceX96Upper, amount0Desired, 0
-        );
+        uint128 liquidityToRemove =
+            LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96Lower, sqrtPriceX96Upper, amount0Desired);
 
-        // Now remove liquidity using the hook
+        // Now remove half liquidity using the hook
         hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove / 2);
 
         // Verify token0 was withdrawn from Aave
@@ -142,11 +143,11 @@ contract TestRemoveLiquidity is OntraHookFixture {
         uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
 
         // Calculate liquidity for the amount deposited
+        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
         uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint128 totalLiquidity = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, amount1Desired
-        );
+        uint128 totalLiquidity =
+            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
 
         // Remove half the liquidity
         hook.removeLiquidity(key, tickLower, tickUpper, totalLiquidity / 2);
@@ -176,11 +177,11 @@ contract TestRemoveLiquidity is OntraHookFixture {
         assertGt(aaveBalanceBefore, 0);
 
         // Calculate liquidity equivalent for the deposited amount
+        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
         uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint128 liquidityToRemove = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, 100 ether
-        );
+        uint128 liquidityToRemove =
+            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, 100 ether);
 
         // Remove all liquidity
         hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove);
@@ -209,12 +210,12 @@ contract TestRemoveLiquidity is OntraHookFixture {
         uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
 
         // Calculate liquidity based on deposited amount
+        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
         uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
 
-        uint128 liquidityAmount = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, amount1Desired
-        );
+        uint128 liquidityAmount =
+            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
 
         // Remove liquidity
         (uint256 amount0Withdrawn, uint256 amount1Withdrawn) =

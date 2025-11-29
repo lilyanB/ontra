@@ -4,3 +4,4 @@ solady/=lib/solady/
 v4-core/=lib/v4-periphery/lib/v4-core/src/
 v4-periphery/=lib/v4-periphery/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+aave-v3/=lib/aave-v3-origin/src/

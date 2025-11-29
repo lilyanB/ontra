@@ -7,7 +7,7 @@ import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
-import {PointsHook} from "../src/PointsHook.sol";
+import {PointsHook} from "../src/workshop/PointsHook.sol";
 
 // Live run: forge script script/PointsHook.s.sol:PointsHookScript --rpc-url https://mainnet.base.org --chain-id
 // Test run: forge script script/PointsHook.s.sol:PointsHookScript --rpc-url https://mainnet.base.org --chain-id

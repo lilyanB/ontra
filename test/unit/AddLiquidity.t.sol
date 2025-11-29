@@ -50,6 +50,25 @@ contract TestAddLiquidity is OntraHookFixture {
 
         // Verify liquidity was added
         assertGt(liquidity, 0, "Liquidity should be positive");
+
+        {
+            // Verify the position belongs to the HOOK (not the user directly)
+            // but uses user-specific salt to differentiate positions
+            bytes32 userSalt = bytes32(uint256(uint160(address(this))));
+            bytes32 positionId = keccak256(abi.encodePacked(address(hook), tickLower, tickUpper, userSalt));
+            uint128 positionLiquidity = manager.getPositionLiquidity(key.toId(), positionId);
+            assertEq(positionLiquidity, liquidity, "Hook should own position with user-specific salt");
+        }
+
+        // Verify user does NOT own the position directly
+        bytes32 userPositionId = keccak256(abi.encodePacked(address(this), tickLower, tickUpper, bytes32(0)));
+        uint128 userDirectLiquidity = manager.getPositionLiquidity(key.toId(), userPositionId);
+        assertEq(userDirectLiquidity, 0, "User should not own position directly");
+
+        // Verify hook has no position with zero salt (default salt)
+        bytes32 hookPositionId = keccak256(abi.encodePacked(address(hook), tickLower, tickUpper, bytes32(0)));
+        uint128 hookLiquidity = manager.getPositionLiquidity(key.toId(), hookPositionId);
+        assertEq(hookLiquidity, 0, "Hook should not have position with zero salt");
     }
 
     /**
@@ -174,8 +193,26 @@ contract TestAddLiquidity is OntraHookFixture {
         assertTrue(aaveToken1After > aaveToken1Before, "Token1 should be deposited to Aave");
 
         // Verify liquidities
-        assertGt(liquidity1, 0, "First liquidity should be positive");
+        assertGt(liquidity1, 0, "First liquidity should be positive (in-range)");
         assertEq(liquidity2, 0, "Second liquidity should be 0 for Aave deposits");
+
+        // Verify the in-range position belongs to the HOOK with user-specific salt
+        {
+            bytes32 userSalt = bytes32(uint256(uint160(address(this))));
+            bytes32 positionId = keccak256(abi.encodePacked(address(hook), tickLower, tickUpper, userSalt));
+            uint128 positionLiquidity = manager.getPositionLiquidity(key.toId(), positionId);
+            assertEq(positionLiquidity, liquidity1, "Hook should own position with user-specific salt");
+        }
+
+        // Verify user does NOT own the position directly
+        bytes32 userPositionId = keccak256(abi.encodePacked(address(this), tickLower, tickUpper, bytes32(0)));
+        uint128 userDirectLiquidity = manager.getPositionLiquidity(key.toId(), userPositionId);
+        assertEq(userDirectLiquidity, 0, "User should not own position directly");
+
+        // Verify hook has no position with zero salt
+        bytes32 hookPositionId = keccak256(abi.encodePacked(address(hook), tickLower, tickUpper, bytes32(0)));
+        uint128 hookLiquidity = manager.getPositionLiquidity(key.toId(), hookPositionId);
+        assertEq(hookLiquidity, 0, "Hook should not have position with zero salt");
     }
 
     /**
@@ -224,7 +261,7 @@ contract TestAddLiquidity is OntraHookFixture {
         // Both deposits should be positive
         assertGt(firstDeposit, 0, "First deposit should be positive");
         assertGt(secondDeposit, 0, "Second deposit should be positive");
-        assertEq(liquidity1, 0, "First liquidity should be 0 for Aave deposits");
-        assertEq(liquidity2, 0, "Second liquidity should be 0 for Aave deposits");
+        assertEq(liquidity1, 0, "First liquidity should be 0 for Aave deposits (out-of-range)");
+        assertEq(liquidity2, 0, "Second liquidity should be 0 for Aave deposits (out-of-range)");
     }
 }

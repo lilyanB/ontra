@@ -98,7 +98,7 @@ contract OntraHook is BaseHook, IOntra {
                     key: key,
                     tickLower: tickLower,
                     tickUpper: tickUpper,
-                    liquidityDelta: int256(uint256(type(uint128).max)), // Calculate actual liquidity in callback
+                    liquidityDelta: int256(uint256(type(uint128).max)),
                     amount0: amount0Desired,
                     amount1: amount1Desired,
                     isAdd: true
@@ -198,7 +198,7 @@ contract OntraHook is BaseHook, IOntra {
                     tickLower: params.tickLower,
                     tickUpper: params.tickUpper,
                     liquidityDelta: int256(uint256(liquidityAmount)),
-                    salt: bytes32(0)
+                    salt: bytes32(uint256(uint160(params.sender)))
                 }),
                 ""
             );
@@ -209,6 +209,7 @@ contract OntraHook is BaseHook, IOntra {
             if (delta.amount1() < 0) {
                 params.key.currency1.settle(poolManager, params.sender, uint256(uint128(-delta.amount1())), false);
             }
+
             return abi.encode(liquidityAmount);
         } else {
             // Position is out of range: deposit to Aave
@@ -240,7 +241,7 @@ contract OntraHook is BaseHook, IOntra {
                     tickLower: params.tickLower,
                     tickUpper: params.tickUpper,
                     liquidityDelta: params.liquidityDelta,
-                    salt: bytes32(0)
+                    salt: bytes32(uint256(uint160(params.sender))) // Use same salt to access user's position
                 }),
                 ""
             );

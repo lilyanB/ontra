@@ -6,6 +6,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {DataTypes} from "aave-v3/contracts/protocol/libraries/types/DataTypes.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Currency} from "v4-core/types/Currency.sol";
+import {BeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SwapParams} from "v4-core/types/PoolOperation.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
@@ -54,8 +56,8 @@ contract Ontra is BaseHook, IOntra {
             afterAddLiquidity: true,
             beforeRemoveLiquidity: true,
             afterRemoveLiquidity: false,
-            beforeSwap: false,
-            afterSwap: true,
+            beforeSwap: true,
+            afterSwap: false,
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
@@ -93,7 +95,7 @@ contract Ontra is BaseHook, IOntra {
             TickMath.getSqrtPriceAtTick(currentTick), sqrtPriceX96Lower, sqrtPriceX96Upper, liquidityToRemove
         );
 
-        // Withdraw funds from Aave (negative amounts = withdrawal)
+        // withdraw funds from Aave (negative amounts = withdrawal)
         _aaveMigrate(key.currency0, -int256(amount0));
         _aaveMigrate(key.currency1, -int256(amount1));
 
@@ -122,24 +124,20 @@ contract Ontra is BaseHook, IOntra {
         return (this.afterAddLiquidity.selector, delta);
     }
 
-    function _afterSwap(address sender, PoolKey calldata key, SwapParams calldata params, BalanceDelta, bytes calldata)
+    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
         internal
         override
-        returns (bytes4, int128)
+        returns (bytes4, BeforeSwapDelta, uint24)
     {
         (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
         int24 lastTick = _lastTicks[key.toId()];
 
         if (currentTick == lastTick) {
             // no tick change, nothing to do
-            return (this.afterSwap.selector, 0);
+            return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
         }
-        // TODO: modify Aave investments based on tick movement and liquidity ranges
 
-        // New last known tick for this pool is the tick value
-        // after our orders are executed
-        _lastTicks[key.toId()] = currentTick;
-        return (this.afterSwap.selector, 0);
+        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
     /**

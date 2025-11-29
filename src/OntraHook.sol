@@ -190,19 +190,17 @@ contract OntraHook is BaseHook, IOntra {
         (, int24 currentTick,,) = poolManager.getSlot0(params.key.toId());
 
         // Check if position is in range (contains current tick)
-        bool isInRange = (params.tickLower <= currentTick && currentTick < params.tickUpper);
+        bool isInRange = (params.tickLower <= currentTick && currentTick <= params.tickUpper);
 
         if (isInRange) {
             // Calculate liquidity based on current price and desired amounts
             uint160 sqrtPriceX96Current = TickMath.getSqrtPriceAtTick(currentTick);
             uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(params.tickLower);
             uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(params.tickUpper);
-            // Add liquidity to the pool via modifyLiquidity
             // Calculate actual liquidity amount
             uint128 liquidityAmount = LiquidityAmounts.getLiquidityForAmounts(
                 sqrtPriceX96Current, sqrtPriceX96Lower, sqrtPriceX96Upper, params.amount0, params.amount1
             );
-
             // Add liquidity to pool
             (BalanceDelta delta,) = poolManager.modifyLiquidity(
                 params.key,
@@ -232,52 +230,22 @@ contract OntraHook is BaseHook, IOntra {
                 _aaveDeposit(params.key.currency1, params.amount1);
             }
         }
-
-        // Calculate and store position
-        uint128 liquidity = uint128(params.amount0 + params.amount1); // Simplified
-        bytes32 positionId =
-            keccak256(abi.encodePacked(params.sender, params.key.toId(), params.tickLower, params.tickUpper));
-
-        positions[positionId] = Position({
-            liquidity: positions[positionId].liquidity + liquidity,
-            token0Deposited: positions[positionId].token0Deposited + params.amount0,
-            token1Deposited: positions[positionId].token1Deposited + params.amount1,
-            isInRange: isInRange
-        });
-
-        return abi.encode(liquidity);
     }
 
     function _handleRemoveLiquidity(CallbackData memory params) internal returns (bytes memory) {
-        uint128 liquidityToRemove = uint128(uint256(-params.liquidityDelta));
-        bytes32 positionId =
-            keccak256(abi.encodePacked(params.sender, params.key.toId(), params.tickLower, params.tickUpper));
+        (, int24 currentTick,,) = poolManager.getSlot0(params.key.toId());
 
-        Position storage position = positions[positionId];
-        require(position.liquidity >= liquidityToRemove, "Insufficient liquidity");
+        // Check if position is in range (contains current tick)
+        bool isInRange = (params.tickLower <= currentTick && currentTick < params.tickUpper);
 
-        // Calculate proportional amounts
-        uint256 amount0 = (position.token0Deposited * liquidityToRemove) / position.liquidity;
-        uint256 amount1 = (position.token1Deposited * liquidityToRemove) / position.liquidity;
-
-        if (position.isInRange) {
-            // Remove liquidity from PoolManager
-            (, int24 currentTick,,) = poolManager.getSlot0(params.key.toId());
-            uint128 liquidityAmount = LiquidityAmounts.getLiquidityForAmounts(
-                TickMath.getSqrtPriceAtTick(currentTick),
-                TickMath.getSqrtPriceAtTick(params.tickLower),
-                TickMath.getSqrtPriceAtTick(params.tickUpper),
-                amount0,
-                amount1
-            );
-
+        if (isInRange) {
             // Remove liquidity from pool
             (BalanceDelta delta,) = poolManager.modifyLiquidity(
                 params.key,
                 ModifyLiquidityParams({
                     tickLower: params.tickLower,
                     tickUpper: params.tickUpper,
-                    liquidityDelta: -int256(uint256(liquidityAmount)),
+                    liquidityDelta: params.liquidityDelta,
                     salt: bytes32(0)
                 }),
                 ""
@@ -290,6 +258,12 @@ contract OntraHook is BaseHook, IOntra {
                 params.key.currency1.take(poolManager, params.sender, uint256(uint128(delta.amount1())), false);
             }
         } else {
+            (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
+                TickMath.getSqrtPriceAtTick(_lastTicks[params.key.toId()]),
+                TickMath.getSqrtPriceAtTick(params.tickLower),
+                TickMath.getSqrtPriceAtTick(params.tickUpper),
+                uint128(uint256(-params.liquidityDelta))
+            );
             // Withdraw from Aave and send to user
             if (amount0 > 0) {
                 _aaveWithdraw(params.key.currency0, amount0);
@@ -300,13 +274,6 @@ contract OntraHook is BaseHook, IOntra {
                 IERC20(Currency.unwrap(params.key.currency1)).transfer(params.sender, amount1);
             }
         }
-
-        // Update position
-        position.liquidity -= liquidityToRemove;
-        position.token0Deposited -= amount0;
-        position.token1Deposited -= amount1;
-
-        return abi.encode(amount0, amount1);
     }
 
     /**

@@ -129,14 +129,15 @@ contract Ontra is BaseHook, IOntra {
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
         int24 lastTick = _lastTicks[key.toId()];
+        int24 newTickAfterSwap;
 
-        if (currentTick == lastTick) {
+        if (lastTick == newTickAfterSwap) {
             // no tick change, nothing to do
             return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
         }
 
+        _lastTicks[key.toId()] = newTickAfterSwap;
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 

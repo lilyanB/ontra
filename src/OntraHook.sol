@@ -517,7 +517,7 @@ contract OntraHook is BaseHook, IOntra {
             // Calculate proportional amounts to withdraw
             require(totalVirtualLiquidity > 0, "No liquidity on Aave");
             require(liquidityToRemove <= totalVirtualLiquidity, "Insufficient liquidity on Aave");
-            
+
             if (liquidityToRemove >= totalVirtualLiquidity) {
                 // Withdraw all
                 amount0 = position.amount0OnAave;

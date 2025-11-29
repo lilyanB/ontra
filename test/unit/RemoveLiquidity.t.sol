@@ -61,17 +61,12 @@ contract TestRemoveLiquidity is OntraHookFixture {
     function test_removeLiquidity_outsideCurrentTickRange_above() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity above current tick
-        int24 tickLower = currentTick + 100;
-        int24 tickUpper = currentTick + 200;
+        // Add liquidity above current tick using the hook
+        int24 tickLower = currentTick + 120;
+        int24 tickUpper = currentTick + 240;
 
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: 10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        uint256 amount1Desired = 100 ether;
+        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
 
         MockAavePool mockAavePool = MockAavePool(address(aavePool));
         uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
@@ -79,14 +74,15 @@ contract TestRemoveLiquidity is OntraHookFixture {
         // Verify funds were deposited to Aave
         assertGt(aaveBalanceBefore, 0);
 
-        // Now remove liquidity
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
+        // Calculate liquidity for the amount deposited
+        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
+        uint128 liquidityToRemove = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, amount1Desired
         );
+
+        // Now remove liquidity using the hook
+        hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove / 2);
 
         // Verify funds were withdrawn from Aave
         uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
@@ -100,17 +96,12 @@ contract TestRemoveLiquidity is OntraHookFixture {
     function test_removeLiquidity_outsideCurrentTickRange_below() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity below current tick
-        int24 tickLower = currentTick - 200;
-        int24 tickUpper = currentTick - 100;
+        // Add liquidity below current tick using the hook
+        int24 tickLower = currentTick - 240;
+        int24 tickUpper = currentTick - 120;
 
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: 10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        uint256 amount0Desired = 100 ether;
+        hook.addLiquidity(key, tickLower, tickUpper, amount0Desired, 0);
 
         MockAavePool mockAavePool = MockAavePool(address(aavePool));
         uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token0));
@@ -118,14 +109,15 @@ contract TestRemoveLiquidity is OntraHookFixture {
         // Verify token0 was deposited to Aave
         assertGt(aaveBalanceBefore, 0);
 
-        // Now remove liquidity
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
+        // Calculate liquidity for the amount deposited
+        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
+        uint128 liquidityToRemove = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96Upper, sqrtPriceX96Lower, sqrtPriceX96Upper, amount0Desired, 0
         );
+
+        // Now remove liquidity using the hook
+        hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove / 2);
 
         // Verify token0 was withdrawn from Aave
         uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token0));
@@ -139,29 +131,25 @@ contract TestRemoveLiquidity is OntraHookFixture {
     function test_removeLiquidity_partial_fromAave() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity above current tick
-        int24 tickLower = currentTick + 100;
-        int24 tickUpper = currentTick + 200;
+        // Add liquidity above current tick using the hook
+        int24 tickLower = currentTick + 120;
+        int24 tickUpper = currentTick + 240;
 
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: 20 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        uint256 amount1Desired = 100 ether;
+        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
 
         MockAavePool mockAavePool = MockAavePool(address(aavePool));
         uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
 
-        // Remove half the liquidity
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
+        // Calculate liquidity for the amount deposited
+        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
+        uint128 totalLiquidity = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, amount1Desired
         );
+
+        // Remove half the liquidity
+        hook.removeLiquidity(key, tickLower, tickUpper, totalLiquidity / 2);
 
         uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
 
@@ -177,30 +165,25 @@ contract TestRemoveLiquidity is OntraHookFixture {
     function test_removeLiquidity_complete_fromAave() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity above current tick
-        int24 tickLower = currentTick + 100;
-        int24 tickUpper = currentTick + 200;
+        // Add liquidity above current tick using the hook
+        int24 tickLower = currentTick + 120;
+        int24 tickUpper = currentTick + 240;
 
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: 10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        hook.addLiquidity(key, tickLower, tickUpper, 0, 100 ether);
 
         MockAavePool mockAavePool = MockAavePool(address(aavePool));
         uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
         assertGt(aaveBalanceBefore, 0);
 
-        // Remove all liquidity
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
+        // Calculate liquidity equivalent for the deposited amount
+        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
+        uint128 liquidityToRemove = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, 100 ether
         );
+
+        // Remove all liquidity
+        hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove);
 
         uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
 
@@ -215,51 +198,33 @@ contract TestRemoveLiquidity is OntraHookFixture {
     function test_removeLiquidity_correctAmountCalculation() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity above current tick
-        int24 tickLower = currentTick + 100;
-        int24 tickUpper = currentTick + 200;
+        // Add liquidity above current tick using the hook
+        int24 tickLower = currentTick + 120;
+        int24 tickUpper = currentTick + 240;
 
-        uint128 liquidityAmount = 15 ether;
-
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: int256(uint256(liquidityAmount)),
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        uint256 amount1Desired = 100 ether;
+        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
 
         MockAavePool mockAavePool = MockAavePool(address(aavePool));
         uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
 
-        // Calculate expected amounts
+        // Calculate liquidity based on deposited amount
         uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint160 currentSqrtPrice = TickMath.getSqrtPriceAtTick(currentTick);
 
-        (uint256 expectedAmount0, uint256 expectedAmount1) = LiquidityAmounts.getAmountsForLiquidity(
-            currentSqrtPrice, sqrtPriceX96Lower, sqrtPriceX96Upper, liquidityAmount
+        uint128 liquidityAmount = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96Lower, sqrtPriceX96Lower, sqrtPriceX96Upper, 0, amount1Desired
         );
 
         // Remove liquidity
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: -int256(uint256(liquidityAmount)),
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        (uint256 amount0Withdrawn, uint256 amount1Withdrawn) =
+            hook.removeLiquidity(key, tickLower, tickUpper, liquidityAmount);
 
         uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
         uint256 withdrawn = aaveBalanceBefore - aaveBalanceAfter;
 
-        // The withdrawn amount should be close to expected (allowing for small rounding differences)
-        assertApproxEqAbs(withdrawn, expectedAmount1, 1e10);
+        // The withdrawn amount should match what was returned
+        assertEq(amount0Withdrawn, 0, "No token0 should be withdrawn");
+        assertApproxEqAbs(withdrawn, amount1Withdrawn, 1e10, "Withdrawn amount should match");
     }
 }

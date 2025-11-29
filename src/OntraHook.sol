@@ -209,6 +209,7 @@ contract OntraHook is BaseHook, IOntra {
             if (delta.amount1() < 0) {
                 params.key.currency1.settle(poolManager, params.sender, uint256(uint128(-delta.amount1())), false);
             }
+            return abi.encode(liquidityAmount);
         } else {
             // Position is out of range: deposit to Aave
             if (params.amount0 > 0) {
@@ -219,6 +220,9 @@ contract OntraHook is BaseHook, IOntra {
                 IERC20(Currency.unwrap(params.key.currency1)).transferFrom(params.sender, address(this), params.amount1);
                 _aaveDeposit(params.key.currency1, params.amount1);
             }
+
+            // No liquidity is added to the pool when depositing to Aave
+            return abi.encode(uint128(0));
         }
     }
 
@@ -247,6 +251,7 @@ contract OntraHook is BaseHook, IOntra {
             if (delta.amount1() > 0) {
                 params.key.currency1.take(poolManager, params.sender, uint256(uint128(delta.amount1())), false);
             }
+            return abi.encode(uint256(uint128(delta.amount0())), uint256(uint128(delta.amount1())));
         } else {
             (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
                 TickMath.getSqrtPriceAtTick(_lastTicks[params.key.toId()]),
@@ -263,6 +268,7 @@ contract OntraHook is BaseHook, IOntra {
                 _aaveWithdraw(params.key.currency1, amount1);
                 IERC20(Currency.unwrap(params.key.currency1)).transfer(params.sender, amount1);
             }
+            return abi.encode(amount0, amount1);
         }
     }
 

@@ -89,7 +89,7 @@ contract TestAddLiquidity is OntraHookFixture {
 
         // Verify user paid token1
         assertTrue(userToken1After < userToken1Before, "User should have paid token1");
-        assertGt(liquidity, 0, "Liquidity should be positive");
+        assertEq(liquidity, 0, "Liquidity should be 0 for Aave deposits");
     }
 
     /**
@@ -129,7 +129,7 @@ contract TestAddLiquidity is OntraHookFixture {
 
         // Verify user paid token0
         assertTrue(userToken0After < userToken0Before, "User should have paid token0");
-        assertGt(liquidity, 0, "Liquidity should be positive");
+        assertEq(liquidity, 0, "Liquidity should be 0 for Aave deposits");
     }
 
     /**
@@ -175,7 +175,7 @@ contract TestAddLiquidity is OntraHookFixture {
 
         // Verify liquidities
         assertGt(liquidity1, 0, "First liquidity should be positive");
-        assertGt(liquidity2, 0, "Second liquidity should be positive");
+        assertEq(liquidity2, 0, "Second liquidity should be 0 for Aave deposits");
     }
 
     /**
@@ -195,7 +195,7 @@ contract TestAddLiquidity is OntraHookFixture {
 
         // Verify large deposit
         assertTrue(aaveToken0After > aaveToken0Before, "Large amount should be deposited");
-        assertGt(liquidity, 0, "Liquidity should be positive");
+        assertEq(liquidity, 0, "Liquidity should be 0 for Aave deposits");
     }
 
     /**
@@ -224,7 +224,7 @@ contract TestAddLiquidity is OntraHookFixture {
         // Both deposits should be positive
         assertGt(firstDeposit, 0, "First deposit should be positive");
         assertGt(secondDeposit, 0, "Second deposit should be positive");
-        assertGt(liquidity1, 0, "First liquidity should be positive");
-        assertGt(liquidity2, 0, "Second liquidity should be positive");
+        assertEq(liquidity1, 0, "First liquidity should be 0 for Aave deposits");
+        assertEq(liquidity2, 0, "Second liquidity should be 0 for Aave deposits");
     }
 }

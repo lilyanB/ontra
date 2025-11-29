@@ -124,21 +124,15 @@ contract Ontra is BaseHook, IOntra {
         return (this.afterAddLiquidity.selector, delta);
     }
 
-    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
-        internal
-        override
-        returns (bytes4, BeforeSwapDelta, uint24)
-    {
-        int24 lastTick = _lastTicks[key.toId()];
-        int24 newTickAfterSwap;
-
-        if (lastTick == newTickAfterSwap) {
-            // no tick change, nothing to do
-            return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
-        }
-
-        _lastTicks[key.toId()] = newTickAfterSwap;
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    function _afterSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) internal override returns (bytes4, int128) {
+        _lastTicks[key.toId()] = poolManager.getSlot0(key.toId()).tick;
+        return (BaseHook.afterSwap.selector, 0);
     }
 
     /**

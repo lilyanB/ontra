@@ -6,7 +6,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Deployers} from "@uniswap/v4-core/test/utils/Deployers.sol";
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
-import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
+import {MockERC20} from "solady/test/utils/mocks/MockERC20.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 import {PoolManager} from "v4-core/PoolManager.sol";
@@ -23,7 +23,7 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 
 import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-import {TakeProfitsHook} from "../src/TakeProfitsHook.sol";
+import {TakeProfitsHook} from "../../src/workshop/TakeProfitsHook.sol";
 
 contract TakeProfitsHookTest is Test, Deployers, ERC1155Holder {
     // Use the libraries

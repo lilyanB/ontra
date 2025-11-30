@@ -22,36 +22,65 @@ contract TestRemoveLiquidity is OntraHookFixture {
     function test_removeLiquidity_withinCurrentTickRange() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity within current tick range
+        // Add liquidity within current tick range using the hook
         int24 tickLower = currentTick - 60;
         int24 tickUpper = currentTick + 60;
 
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: 10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        uint256 amount0Desired = 10 ether;
+        uint256 amount1Desired = 10 ether;
+
+        uint256 token0BalanceBeforeDeposit = token0.balanceOf(address(this));
+        uint256 token1BalanceBeforeDeposit = token1.balanceOf(address(this));
+
+        uint128 liquidityAdded = hook.addLiquidity(key, tickLower, tickUpper, amount0Desired, amount1Desired);
+
+        uint256 expectedAmount0;
+        uint256 expectedAmount1;
+        {
+            // Calculate expected amounts based on liquidity added
+            uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
+            uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
+            (, int24 tick,,) = manager.getSlot0(key.toId());
+            uint160 sqrtPriceX96Current = TickMath.getSqrtPriceAtTick(tick);
+
+            // Calculate expected amounts for the liquidity added
+            (expectedAmount0, expectedAmount1) = LiquidityAmounts.getAmountsForLiquidity(
+                sqrtPriceX96Current, sqrtPriceX96Lower, sqrtPriceX96Upper, liquidityAdded
+            );
+        }
 
         uint256 token0BalanceBefore = token0.balanceOf(address(this));
         uint256 token1BalanceBefore = token1.balanceOf(address(this));
 
-        // Remove liquidity
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -10 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
+        (uint256 amount0Withdrawn, uint256 amount1Withdrawn) =
+            hook.removeLiquidity(key, tickLower, tickUpper, liquidityAdded);
+
+        // Verify exact amounts withdrawn match expected amounts
+        assertEq(amount0Withdrawn, expectedAmount0, "Token0 withdrawn amount mismatch");
+        assertEq(amount1Withdrawn, expectedAmount1, "Token1 withdrawn amount mismatch");
+
+        // Verify balance changes match withdrawn amounts
+        assertEq(
+            token0.balanceOf(address(this)) - token0BalanceBefore, expectedAmount0, "Token0 balance change mismatch"
+        );
+        assertEq(
+            token1.balanceOf(address(this)) - token1BalanceBefore, expectedAmount1, "Token1 balance change mismatch"
         );
 
-        uint256 token0BalanceAfter = token0.balanceOf(address(this));
-        uint256 token1BalanceAfter = token1.balanceOf(address(this));
-
-        // Should have received tokens back
-        assertGt(token0BalanceAfter, token0BalanceBefore);
-        assertGt(token1BalanceAfter, token1BalanceBefore);
+        // Since tick hasn't moved, we should get back approximately the same amounts we deposited
+        // Allow for small rounding errors (1-2 wei) due to liquidity calculations
+        assertApproxEqAbs(
+            token0.balanceOf(address(this)),
+            token0BalanceBeforeDeposit,
+            2,
+            "Token0 final balance should match initial balance"
+        );
+        assertApproxEqAbs(
+            token1.balanceOf(address(this)),
+            token1BalanceBeforeDeposit,
+            2,
+            "Token1 final balance should match initial balance"
+        );
     }
 
     /**

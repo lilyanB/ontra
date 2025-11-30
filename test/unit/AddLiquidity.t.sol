@@ -207,7 +207,7 @@ contract TestAddLiquidity is OntraHookFixture {
         uint256 aaveToken1After = aavePool.getUserBalance(address(hook), address(token1));
 
         assertEq(aaveToken0After, aaveToken0Before, "No token0 should be deposited (above range)");
-        assertEq(aaveToken1After - aaveToken1Before, 100 ether, "100 ether token1 should be deposited to Aave");
+        assertEq(aaveToken1After - aaveToken1Before, amountToken1Second, "100 ether token1 should be deposited to Aave");
 
         // Verify liquidities
         assertGt(liquidity1, 0, "First liquidity should be positive (in-range)");

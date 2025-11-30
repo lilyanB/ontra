@@ -19,9 +19,9 @@ import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 
-import {IOntra} from "./interfaces/IOntra.sol";
+import {IOntraHook} from "./interfaces/IOntraHook.sol";
 
-contract OntraHook is BaseHook, IOntra {
+contract OntraHook is BaseHook, IOntraHook {
     using StateLibrary for IPoolManager;
     using FixedPointMathLib for uint256;
     using SafeERC20 for IERC20;
@@ -60,7 +60,7 @@ contract OntraHook is BaseHook, IOntra {
         });
     }
 
-    /// @inheritdoc IOntra
+    /// @inheritdoc IOntraHook
     function getPositionKey(address owner, PoolId poolId, int24 tickLower, int24 tickUpper)
         public
         pure
@@ -69,7 +69,7 @@ contract OntraHook is BaseHook, IOntra {
         key_ = keccak256(abi.encode(owner, poolId, tickLower, tickUpper));
     }
 
-    /// @inheritdoc IOntra
+    /// @inheritdoc IOntraHook
     function addLiquidity(
         PoolKey calldata key,
         int24 tickLower,
@@ -89,7 +89,9 @@ contract OntraHook is BaseHook, IOntra {
                     amount0: amount0Desired,
                     amount1: amount1Desired,
                     isAdd: true,
-                    isRebalancing: false
+                    isRebalancing: false,
+                    profit0: 0,
+                    profit1: 0
                 })
             )
         );
@@ -97,7 +99,7 @@ contract OntraHook is BaseHook, IOntra {
         liquidity_ = abi.decode(result, (uint128));
     }
 
-    /// @inheritdoc IOntra
+    /// @inheritdoc IOntraHook
     function removeLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint128 liquidityToRemove)
         external
         returns (uint256 amount0_, uint256 amount1_)
@@ -113,7 +115,9 @@ contract OntraHook is BaseHook, IOntra {
                     amount0: 0,
                     amount1: 0,
                     isAdd: false,
-                    isRebalancing: false
+                    isRebalancing: false,
+                    profit0: 0,
+                    profit1: 0
                 })
             )
         );
@@ -121,7 +125,7 @@ contract OntraHook is BaseHook, IOntra {
         (amount0_, amount1_) = abi.decode(result, (uint256, uint256));
     }
 
-    /// @inheritdoc IOntra
+    /// @inheritdoc IOntraHook
     function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory result_) {
         CallbackData memory params = abi.decode(data, (CallbackData));
 
@@ -132,7 +136,7 @@ contract OntraHook is BaseHook, IOntra {
         }
     }
 
-    /// @inheritdoc IOntra
+    /// @inheritdoc IOntraHook
     function rebalanceToAave(address owner, PoolKey calldata key, int24 tickLower, int24 tickUpper) external {
         bytes32 positionKey = getPositionKey(owner, key.toId(), tickLower, tickUpper);
         PositionInfo storage position = _positions[positionKey];
@@ -156,7 +160,9 @@ contract OntraHook is BaseHook, IOntra {
                     amount0: 0,
                     amount1: 0,
                     isAdd: false,
-                    isRebalancing: true
+                    isRebalancing: true,
+                    profit0: 0,
+                    profit1: 0
                 })
             )
         );
@@ -178,7 +184,7 @@ contract OntraHook is BaseHook, IOntra {
         emit OntraPositionRebalancedToAave(owner, positionKey, amount0, amount1);
     }
 
-    /// @inheritdoc IOntra
+    /// @inheritdoc IOntraHook
     function rebalanceToPool(address owner, PoolKey calldata key, int24 tickLower, int24 tickUpper) external {
         bytes32 positionKey = getPositionKey(owner, key.toId(), tickLower, tickUpper);
         PositionInfo storage position = _positions[positionKey];
@@ -192,49 +198,45 @@ contract OntraHook is BaseHook, IOntra {
         uint256 amount0 = position.amount0OnAave;
         uint256 amount1 = position.amount1OnAave;
 
-        // Withdraw from Aave and capture profits
         uint256 profit0;
         uint256 profit1;
-
         if (amount0 > 0) {
             uint256 withdrawn0 = _aaveWithdraw(key.currency0, amount0);
             if (withdrawn0 > amount0) {
                 profit0 = withdrawn0 - amount0;
-                key.currency0.settle(poolManager, address(this), profit0, false);
             }
         }
         if (amount1 > 0) {
             uint256 withdrawn1 = _aaveWithdraw(key.currency1, amount1);
             if (withdrawn1 > amount1) {
                 profit1 = withdrawn1 - amount1;
-                key.currency1.settle(poolManager, address(this), profit1, false);
             }
         }
 
         // Add liquidity to pool (using principal amounts only)
-        uint128 liquidity = abi.decode(
-            poolManager.unlock(
-                abi.encode(
-                    CallbackData({
-                        sender: owner,
-                        key: key,
-                        tickLower: tickLower,
-                        tickUpper: tickUpper,
-                        liquidityDelta: int256(uint256(type(uint128).max)),
-                        amount0: amount0,
-                        amount1: amount1,
-                        isAdd: true,
-                        isRebalancing: true
-                    })
-                )
-            ),
-            (uint128)
-        );
-
-        // Distribute profits to LPs
-        if (profit0 > 0 || profit1 > 0) {
-            poolManager.donate(key, profit0, profit1, "");
-            emit OntraAaveProfitsDistributed(positionKey, profit0, profit1);
+        // The callback will handle settle and donate for profits
+        uint128 liquidity;
+        {
+            liquidity = abi.decode(
+                poolManager.unlock(
+                    abi.encode(
+                        CallbackData({
+                            sender: owner,
+                            key: key,
+                            tickLower: tickLower,
+                            tickUpper: tickUpper,
+                            liquidityDelta: int256(uint256(type(uint128).max)),
+                            amount0: amount0,
+                            amount1: amount1,
+                            isAdd: true,
+                            isRebalancing: true,
+                            profit0: profit0,
+                            profit1: profit1
+                        })
+                    )
+                ),
+                (uint128)
+            );
         }
 
         position.liquidity = liquidity;
@@ -297,8 +299,26 @@ contract OntraHook is BaseHook, IOntra {
             );
             if (params.isRebalancing) {
                 // When rebalancing, hook provides the tokens (already withdrawn from Aave)
-                params.key.currency0.settle(poolManager, address(this), uint256(uint128(-delta.amount0())), false);
-                params.key.currency1.settle(poolManager, address(this), uint256(uint128(-delta.amount1())), false);
+                // Settle only the liquidity amounts
+                if (delta.amount0() < 0) {
+                    params.key.currency0.settle(poolManager, address(this), uint256(uint128(-delta.amount0())), false);
+                }
+                if (delta.amount1() < 0) {
+                    params.key.currency1.settle(poolManager, address(this), uint256(uint128(-delta.amount1())), false);
+                }
+
+                // Donate profits to LPs (creates a negative delta that must be settled)
+                if (params.profit0 > 0 || params.profit1 > 0) {
+                    poolManager.donate(params.key, params.profit0, params.profit1, "");
+                    // Settle the donation delta
+                    if (params.profit0 > 0) {
+                        params.key.currency0.settle(poolManager, address(this), params.profit0, false);
+                    }
+                    if (params.profit1 > 0) {
+                        params.key.currency1.settle(poolManager, address(this), params.profit1, false);
+                    }
+                    emit OntraAaveProfitsDistributed(positionKey, params.profit0, params.profit1);
+                }
             } else {
                 // Normal case: user provides the tokens
                 params.key.currency0.settle(poolManager, params.sender, uint256(uint128(-delta.amount0())), false);
@@ -435,7 +455,6 @@ contract OntraHook is BaseHook, IOntra {
                 require(liquidityToRemove <= totalVirtualLiquidity, "Insufficient liquidity on Aave");
 
                 if (liquidityToRemove >= totalVirtualLiquidity) {
-                    // Withdraw all
                     amount0 = position.amount0OnAave;
                     amount1 = position.amount1OnAave;
                 } else {
@@ -477,12 +496,18 @@ contract OntraHook is BaseHook, IOntra {
             }
         }
 
-        // If position is fully removed, delete it
-        if (position.liquidity == 0 && position.amount0OnAave == 0 && position.amount1OnAave == 0) {
+        // If position is fully removed, delete it (but not during rebalancing)
+        if (
+            !params.isRebalancing && position.liquidity == 0 && position.amount0OnAave == 0
+                && position.amount1OnAave == 0
+        ) {
             delete _positions[positionKey];
         }
 
-        emit OntraPositionRemoved(params.sender, positionKey, amount0, amount1);
+        // Only emit remove event if not rebalancing
+        if (!params.isRebalancing) {
+            emit OntraPositionRemoved(params.sender, positionKey, amount0, amount1);
+        }
 
         return abi.encode(amount0, amount1);
     }

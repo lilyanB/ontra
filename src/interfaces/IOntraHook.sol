@@ -5,7 +5,7 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 
 /// @title Ontra Interface
-interface IOntra {
+interface IOntraHook {
     /**
      * @notice Struct used to pass data to callbacks during pool operations.
      * @param sender The address initiating the pool operation.
@@ -17,6 +17,8 @@ interface IOntra {
      * @param amount1 The amount of token1 involved in the operation.
      * @param isAdd A boolean indicating if liquidity is being added (true) or removed (false).
      * @param isRebalancing A boolean indicating if the callback is triggered during a rebalance operation.
+     * @param profit0 The profit amount for token0 (used during rebalancing from Aave).
+     * @param profit1 The profit amount for token1 (used during rebalancing from Aave).
      */
     struct CallbackData {
         address sender;
@@ -28,6 +30,8 @@ interface IOntra {
         uint256 amount1;
         bool isAdd;
         bool isRebalancing;
+        uint256 profit0;
+        uint256 profit1;
     }
 
     /**

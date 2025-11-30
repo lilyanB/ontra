@@ -7,6 +7,7 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 import {OntraHookFixture} from "./utils/Fixtures.sol";
 import {MockAavePool} from "./utils/MockAavePool.sol";
@@ -256,5 +257,89 @@ contract TestRemoveLiquidity is OntraHookFixture {
         // The withdrawn amount should match what was returned
         assertEq(amount0Withdrawn, 0, "No token0 should be withdrawn");
         assertApproxEqAbs(withdrawn, amount1Withdrawn, 1e10, "Withdrawn amount should match");
+    }
+
+    /**
+     * @notice Test that Aave yield is distributed to the pool
+     * Add liquidity -> Simulate Aave yield -> Remove liquidity -> Verify profits go to pool
+     */
+    function test_removeLiquidity_aaveYieldDistributedToPool() public {
+        (, int24 currentTick,,) = manager.getSlot0(key.toId());
+
+        // First, add some in-range liquidity to the pool so donate() can work
+        // (donate requires in-range liquidity to receive the fees)
+        int24 inRangeTickLower = currentTick - 60;
+        int24 inRangeTickUpper = currentTick + 60;
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: inRangeTickLower, tickUpper: inRangeTickUpper, liquidityDelta: 100 ether, salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
+
+        // Add liquidity above current tick (will go to Aave)
+        int24 tickLower = currentTick + 120;
+        int24 tickUpper = currentTick + 240;
+
+        uint256 amount1Desired = 100 ether;
+        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
+
+        MockAavePool mockAavePool = MockAavePool(address(aavePool));
+        assertEq(
+            mockAavePool.getUserBalance(address(hook), address(token1)), amount1Desired, "Should have deposited to Aave"
+        );
+
+        // Simulate Aave yield: 10% yield
+        uint256 yieldAmount = 10 ether;
+        mockAavePool.simulateYield(address(token1), yieldAmount);
+
+        // Get balances before withdrawal
+        uint256 poolBalanceBefore = token1.balanceOf(address(manager));
+        uint256 userBalanceBefore = token1.balanceOf(address(this));
+
+        // Calculate liquidity to remove
+        uint128 liquidityAmount;
+        {
+            uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
+            uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
+            liquidityAmount =
+                LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
+        }
+
+        bytes32 positionKey = hook.getPositionKey(address(this), key.toId(), tickLower, tickUpper);
+
+        // Start recording logs to check for the event
+        vm.recordLogs();
+        // Remove liquidity
+        (uint256 amount0Withdrawn, uint256 amount1Withdrawn) =
+            hook.removeLiquidity(key, tickLower, tickUpper, liquidityAmount);
+
+        // Check that OntraAaveProfitsDistributed event was emitted
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool eventFound = false;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == keccak256("OntraAaveProfitsDistributed(bytes32,uint256,uint256)")) {
+                assertEq(logs[i].topics[1], positionKey, "Position key mismatch in event");
+                (uint256 profit0, uint256 profit1) = abi.decode(logs[i].data, (uint256, uint256));
+                assertEq(profit0, 0, "Profit0 should be 0");
+                assertEq(profit1, yieldAmount, "Profit1 should equal yield amount");
+                eventFound = true;
+                break;
+            }
+        }
+        assertTrue(eventFound, "OntraAaveProfitsDistributed event not emitted");
+        // User should receive only their original deposit
+        assertEq(amount0Withdrawn, 0, "No token0 should be withdrawn");
+        assertEq(amount1Withdrawn, amount1Desired, "User should receive their original amount");
+        assertEq(
+            token1.balanceOf(address(this)) - userBalanceBefore,
+            amount1Desired,
+            "User balance should increase by original amount"
+        );
+        // Pool should receive the yield
+        assertEq(
+            token1.balanceOf(address(manager)) - poolBalanceBefore, yieldAmount, "Pool should receive the yield amount"
+        );
     }
 }

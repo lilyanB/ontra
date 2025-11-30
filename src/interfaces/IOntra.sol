@@ -92,6 +92,14 @@ interface IOntra {
      */
     event OntraPositionRebalancedToPool(address indexed owner, bytes32 indexed positionKey, uint128 liquidity);
 
+    /**
+     * @notice Emitted when Aave profits are distributed to the pool.
+     * @param positionKey Unique key of the position.
+     * @param profit0 Amount of token0 profit donated to the pool.
+     * @param profit1 Amount of token1 profit donated to the pool.
+     */
+    event OntraAaveProfitsDistributed(bytes32 indexed positionKey, uint256 profit0, uint256 profit1);
+
     /* -------------------------------------------------------------------------- */
     /*                                   Errors                                   */
     /* -------------------------------------------------------------------------- */

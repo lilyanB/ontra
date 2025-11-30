@@ -379,68 +379,79 @@ contract OntraHook is BaseHook, IOntra {
             if (position.liquidity < liquidityToRemove) revert OntraNotEnoughLiquidity();
             position.liquidity -= liquidityToRemove;
         } else {
-            // Withdraw from Aave - position is out of range
+            {
+                // Withdraw from Aave - position is out of range
 
-            // Calculate total "virtual liquidity" that the current Aave amounts represent
-            // Use the appropriate tick for calculation based on where current price is relative to range
-            (, int24 currentTick,,) = poolManager.getSlot0(params.key.toId());
-            uint160 sqrtPriceX96;
+                // Calculate total "virtual liquidity" that the current Aave amounts represent
+                uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(params.tickLower);
+                uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(params.tickUpper);
 
-            if (currentTick < params.tickLower) {
-                // Current tick below range - all liquidity in token0
-                sqrtPriceX96 = TickMath.getSqrtPriceAtTick(params.tickLower);
-            } else {
-                // Current tick above range - all liquidity in token1
-                sqrtPriceX96 = TickMath.getSqrtPriceAtTick(params.tickUpper);
+                // Calculate total virtual liquidity from amounts on Aave
+                uint128 totalVirtualLiquidity;
+                if (position.amount0OnAave > 0 && position.amount1OnAave > 0) {
+                    {
+                        // Both tokens on Aave - calculate liquidity for both and take the one that gives more liquidity
+                        uint128 liq0 = LiquidityAmounts.getLiquidityForAmount0(
+                            sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount0OnAave
+                        );
+                        uint128 liq1 = LiquidityAmounts.getLiquidityForAmount1(
+                            sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount1OnAave
+                        );
+                        totalVirtualLiquidity = liq0 > liq1 ? liq0 : liq1;
+                    }
+                } else if (position.amount0OnAave > 0) {
+                    totalVirtualLiquidity = LiquidityAmounts.getLiquidityForAmount0(
+                        sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount0OnAave
+                    );
+                } else if (position.amount1OnAave > 0) {
+                    totalVirtualLiquidity = LiquidityAmounts.getLiquidityForAmount1(
+                        sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount1OnAave
+                    );
+                }
+
+                // Calculate proportional amounts to withdraw
+                require(totalVirtualLiquidity > 0, "No liquidity on Aave");
+                require(liquidityToRemove <= totalVirtualLiquidity, "Insufficient liquidity on Aave");
+
+                if (liquidityToRemove >= totalVirtualLiquidity) {
+                    // Withdraw all
+                    amount0 = position.amount0OnAave;
+                    amount1 = position.amount1OnAave;
+                } else {
+                    // Withdraw proportionally
+                    amount0 = position.amount0OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
+                    amount1 = position.amount1OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
+                }
             }
 
-            uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(params.tickLower);
-            uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(params.tickUpper);
-
-            // Calculate total virtual liquidity from amounts on Aave
-            uint128 totalVirtualLiquidity;
-            if (position.amount0OnAave > 0 && position.amount1OnAave > 0) {
-                // Both tokens on Aave - calculate liquidity for both and take the one that gives more liquidity
-                // This should theoretically not happen in a properly managed position, but handle it safely
-                uint128 liq0 = LiquidityAmounts.getLiquidityForAmount0(
-                    sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount0OnAave
-                );
-                uint128 liq1 = LiquidityAmounts.getLiquidityForAmount1(
-                    sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount1OnAave
-                );
-                totalVirtualLiquidity = liq0 > liq1 ? liq0 : liq1;
-            } else if (position.amount0OnAave > 0) {
-                totalVirtualLiquidity = LiquidityAmounts.getLiquidityForAmount0(
-                    sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount0OnAave
-                );
-            } else if (position.amount1OnAave > 0) {
-                totalVirtualLiquidity = LiquidityAmounts.getLiquidityForAmount1(
-                    sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount1OnAave
-                );
-            }
-
-            // Calculate proportional amounts to withdraw
-            require(totalVirtualLiquidity > 0, "No liquidity on Aave");
-            require(liquidityToRemove <= totalVirtualLiquidity, "Insufficient liquidity on Aave");
-
-            if (liquidityToRemove >= totalVirtualLiquidity) {
-                // Withdraw all
-                amount0 = position.amount0OnAave;
-                amount1 = position.amount1OnAave;
-            } else {
-                // Withdraw proportionally
-                amount0 = position.amount0OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
-                amount1 = position.amount1OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
-            }
-
+            // Withdraw from Aave and distribute profits
             if (amount0 > 0) {
-                _aaveWithdraw(params.key.currency0, amount0);
+                // Withdraw from Aave - returns actual amount including interest
+                uint256 withdrawn0 = _aaveWithdraw(params.key.currency0, amount0);
+                // Send tracked amount to user
                 IERC20(Currency.unwrap(params.key.currency0)).transfer(params.sender, amount0);
+                if (withdrawn0 > amount0) {
+                    uint256 profit0 = withdrawn0 - amount0;
+                    params.key.currency0.settle(poolManager, address(this), profit0, false);
+                    poolManager.donate(params.key, profit0, 0, "");
+                    emit OntraAaveProfitsDistributed(positionKey, profit0, 0);
+                }
+
                 position.amount0OnAave -= amount0;
             }
+
             if (amount1 > 0) {
-                _aaveWithdraw(params.key.currency1, amount1);
+                // Withdraw from Aave - returns actual amount including interest
+                uint256 withdrawn1 = _aaveWithdraw(params.key.currency1, amount1);
+                // Send tracked amount to user
                 IERC20(Currency.unwrap(params.key.currency1)).transfer(params.sender, amount1);
+                if (withdrawn1 > amount1) {
+                    uint256 profit1 = withdrawn1 - amount1;
+                    params.key.currency1.settle(poolManager, address(this), profit1, false);
+                    poolManager.donate(params.key, 0, profit1, "");
+                    emit OntraAaveProfitsDistributed(positionKey, 0, profit1);
+                }
+
                 position.amount1OnAave -= amount1;
             }
         }
@@ -469,8 +480,9 @@ contract OntraHook is BaseHook, IOntra {
      * @notice Withdraws tokens from Aave.
      * @param asset The asset being withdrawn.
      * @param amount Amount to withdraw.
+     * @return actualAmount The actual amount withdrawn (may include interest).
      */
-    function _aaveWithdraw(Currency asset, uint256 amount) internal {
-        AAVE_POOL.withdraw(Currency.unwrap(asset), amount, address(this));
+    function _aaveWithdraw(Currency asset, uint256 amount) internal returns (uint256 actualAmount) {
+        actualAmount = AAVE_POOL.withdraw(Currency.unwrap(asset), amount, address(this));
     }
 }

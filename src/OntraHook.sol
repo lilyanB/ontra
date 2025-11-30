@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
 
 import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -29,51 +29,18 @@ contract OntraHook is BaseHook, IOntra {
 
     IPool public immutable AAVE_POOL;
 
-    event PositionAdded(address indexed owner, bytes32 indexed positionKey, bool isInRange, uint128 liquidity);
-    event PositionRemoved(address indexed owner, bytes32 indexed positionKey, uint256 amount0, uint256 amount1);
-    event PositionRebalancedToAave(
-        address indexed owner, bytes32 indexed positionKey, uint256 amount0, uint256 amount1
-    );
-    event PositionRebalancedToPool(address indexed owner, bytes32 indexed positionKey, uint128 liquidity);
-
     mapping(PoolId poolId => int24 lastTick) public _lastTicks;
+    mapping(bytes32 positionKey => PositionInfo) public _positions;
 
-    mapping(IERC20 => AssetData) _assets;
-    mapping(bytes32 => uint256) _loanShares; // loanHash => shares
-    mapping(bytes32 => uint256) _tickShares; // tickHash => shares
-
-    // Position tracking
-    struct PositionInfo {
-        address owner;
-        PoolId poolId;
-        int24 tickLower;
-        int24 tickUpper;
-        uint128 liquidity;
-        bool isInRange;
-        uint256 amount0OnAave; // Amount on Aave when out of range
-        uint256 amount1OnAave; // Amount on Aave when out of range
+    /**
+     * @param manager The PoolManager this hook is associated with
+     * @param aavePool The Aave Pool contract address
+     */
+    constructor(IPoolManager manager, IPool aavePool) BaseHook(manager) {
+        AAVE_POOL = aavePool;
     }
 
-    mapping(bytes32 positionKey => PositionInfo) public positions;
-
-    struct CallbackData {
-        address sender;
-        PoolKey key;
-        int24 tickLower;
-        int24 tickUpper;
-        int256 liquidityDelta;
-        uint256 amount0;
-        uint256 amount1;
-        bool isAdd;
-        bool isRebalancing; // True when called from rebalance functions
-    }
-
-    // Constructor
-    constructor(IPoolManager _manager, IPool _aavePool) BaseHook(_manager) {
-        AAVE_POOL = _aavePool;
-    }
-
-    // BaseHook Functions
+    /// @inheritdoc BaseHook
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
@@ -93,14 +60,7 @@ contract OntraHook is BaseHook, IOntra {
         });
     }
 
-    /**
-     * @notice Get the position key for a user's position
-     * @param owner Owner of the position
-     * @param poolId Pool ID
-     * @param tickLower Lower tick
-     * @param tickUpper Upper tick
-     * @return key_ The unique key for this position
-     */
+    /// @inheritdoc IOntra
     function getPositionKey(address owner, PoolId poolId, int24 tickLower, int24 tickUpper)
         public
         pure
@@ -109,22 +69,14 @@ contract OntraHook is BaseHook, IOntra {
         key_ = keccak256(abi.encode(owner, poolId, tickLower, tickUpper));
     }
 
-    /**
-     * @notice Add liquidity through the hook - tokens are deposited to Aave
-     * @param key PoolKey of the pool
-     * @param tickLower Lower tick of the position
-     * @param tickUpper Upper tick of the position
-     * @param amount0Desired Desired amount of token0 to add
-     * @param amount1Desired Desired amount of token1 to add
-     * @return liquidity Amount of liquidity added
-     */
+    /// @inheritdoc IOntra
     function addLiquidity(
         PoolKey calldata key,
         int24 tickLower,
         int24 tickUpper,
         uint256 amount0Desired,
         uint256 amount1Desired
-    ) external returns (uint128 liquidity) {
+    ) external returns (uint128 liquidity_) {
         // Use unlock to interact with PoolManager
         bytes memory result = poolManager.unlock(
             abi.encode(
@@ -142,21 +94,13 @@ contract OntraHook is BaseHook, IOntra {
             )
         );
 
-        liquidity = abi.decode(result, (uint128));
+        liquidity_ = abi.decode(result, (uint128));
     }
 
-    /**
-     * @notice Remove liquidity through the hook - tokens are withdrawn from Aave
-     * @param key PoolKey of the pool
-     * @param tickLower Lower tick of the position
-     * @param tickUpper Upper tick of the position
-     * @param liquidityToRemove Amount of liquidity to remove
-     * @return amount0 Amount of token0 withdrawn
-     * @return amount1 Amount of token1 withdrawn
-     */
+    /// @inheritdoc IOntra
     function removeLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint128 liquidityToRemove)
         external
-        returns (uint256 amount0, uint256 amount1)
+        returns (uint256 amount0_, uint256 amount1_)
     {
         bytes memory result = poolManager.unlock(
             abi.encode(
@@ -174,39 +118,28 @@ contract OntraHook is BaseHook, IOntra {
             )
         );
 
-        (amount0, amount1) = abi.decode(result, (uint256, uint256));
+        (amount0_, amount1_) = abi.decode(result, (uint256, uint256));
     }
 
-    /**
-     * @notice Unlock callback to handle add/remove liquidity
-     * @param data Encoded CallbackData
-     * @return Encoded result depending on add/remove liquidity
-     */
-    function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory) {
+    /// @inheritdoc IOntra
+    function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory result_) {
         CallbackData memory params = abi.decode(data, (CallbackData));
 
         if (params.isAdd) {
-            return _handleAddLiquidity(params);
+            result_ = _handleAddLiquidity(params);
         } else {
-            return _handleRemoveLiquidity(params);
+            result_ = _handleRemoveLiquidity(params);
         }
     }
 
-    /**
-     * @notice Rebalance a position from the pool to Aave when out of range
-     * @dev Can be called by anyone to move an out-of-range position to Aave
-     * @param owner Owner of the position
-     * @param key PoolKey of the pool
-     * @param tickLower Lower tick of the position
-     * @param tickUpper Upper tick of the position
-     */
+    /// @inheritdoc IOntra
     function rebalanceToAave(address owner, PoolKey calldata key, int24 tickLower, int24 tickUpper) external {
         bytes32 positionKey = getPositionKey(owner, key.toId(), tickLower, tickUpper);
-        PositionInfo storage position = positions[positionKey];
+        PositionInfo storage position = _positions[positionKey];
 
-        require(position.owner == owner, "Invalid position");
-        require(position.isInRange, "Position already on Aave");
-        require(position.liquidity > 0, "No liquidity to rebalance");
+        if (position.owner == address(0)) revert OntraNoPosition();
+        if (!position.isInRange) revert OntraPositionAlreadyInAave();
+        if (position.liquidity == 0) revert OntraNoLiquidity();
 
         (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
         require(currentTick < tickLower || tickUpper < currentTick, "Position still in range");
@@ -227,10 +160,8 @@ contract OntraHook is BaseHook, IOntra {
                 })
             )
         );
-
         (uint256 amount0, uint256 amount1) = abi.decode(result, (uint256, uint256));
 
-        // Deposit to Aave
         if (amount0 > 0) {
             _aaveDeposit(key.currency0, amount0);
         }
@@ -244,31 +175,22 @@ contract OntraHook is BaseHook, IOntra {
         position.liquidity = 0;
         position.isInRange = false;
 
-        emit PositionRebalancedToAave(owner, positionKey, amount0, amount1);
+        emit OntraPositionRebalancedToAave(owner, positionKey, amount0, amount1);
     }
 
-    /**
-     * @notice Rebalance a position from Aave to the pool when back in range
-     * @dev Can be called by anyone to move a position back to the pool
-     * @param owner Owner of the position
-     * @param key PoolKey of the pool
-     * @param tickLower Lower tick of the position
-     * @param tickUpper Upper tick of the position
-     */
+    /// @inheritdoc IOntra
     function rebalanceToPool(address owner, PoolKey calldata key, int24 tickLower, int24 tickUpper) external {
         bytes32 positionKey = getPositionKey(owner, key.toId(), tickLower, tickUpper);
-        PositionInfo storage position = positions[positionKey];
+        PositionInfo storage position = _positions[positionKey];
 
-        require(position.owner == owner, "Invalid position");
-        require(!position.isInRange, "Position already in pool");
+        if (position.owner == address(0)) revert OntraNoPosition();
+        if (position.isInRange) revert OntraPositionAlreadyInPool();
 
         (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
         require(tickLower <= currentTick && currentTick <= tickUpper, "Position not in range");
 
         uint256 amount0 = position.amount0OnAave;
         uint256 amount1 = position.amount1OnAave;
-
-        // Withdraw from Aave
         if (amount0 > 0) {
             _aaveWithdraw(key.currency0, amount0);
         }
@@ -292,16 +214,14 @@ contract OntraHook is BaseHook, IOntra {
                 })
             )
         );
-
         uint128 liquidity = abi.decode(result, (uint128));
 
-        // Update position state
         position.liquidity = liquidity;
         position.isInRange = true;
         position.amount0OnAave = 0;
         position.amount1OnAave = 0;
 
-        emit PositionRebalancedToPool(owner, positionKey, liquidity);
+        emit OntraPositionRebalancedToPool(owner, positionKey, liquidity);
     }
 
     /* -------------------------------------------------------------------------- */
@@ -328,9 +248,8 @@ contract OntraHook is BaseHook, IOntra {
     function _handleAddLiquidity(CallbackData memory params) internal returns (bytes memory) {
         (, int24 currentTick,,) = poolManager.getSlot0(params.key.toId());
 
-        // Generate position key
         bytes32 positionKey = getPositionKey(params.sender, params.key.toId(), params.tickLower, params.tickUpper);
-        PositionInfo storage position = positions[positionKey];
+        PositionInfo storage position = _positions[positionKey];
 
         // Check if position is in range (contains current tick)
         bool isInRange = (params.tickLower <= currentTick && currentTick <= params.tickUpper);
@@ -355,7 +274,6 @@ contract OntraHook is BaseHook, IOntra {
                 }),
                 ""
             );
-            // If delta is negative, user owes tokens to the pool
             if (params.isRebalancing) {
                 // When rebalancing, hook provides the tokens (already withdrawn from Aave)
                 params.key.currency0.settle(poolManager, address(this), uint256(uint128(-delta.amount0())), false);
@@ -366,24 +284,22 @@ contract OntraHook is BaseHook, IOntra {
                 params.key.currency1.settle(poolManager, params.sender, uint256(uint128(-delta.amount1())), false);
             }
 
-            // Update or create position info
             if (position.owner == address(0)) {
-                // New position
-                position.owner = params.sender;
-                position.poolId = params.key.toId();
-                position.tickLower = params.tickLower;
-                position.tickUpper = params.tickUpper;
-                position.liquidity = liquidityAmount;
-                position.isInRange = true;
-                position.amount0OnAave = 0;
-                position.amount1OnAave = 0;
+                _positions[positionKey] = PositionInfo({
+                    owner: params.sender,
+                    poolId: params.key.toId(),
+                    tickLower: params.tickLower,
+                    tickUpper: params.tickUpper,
+                    liquidity: liquidityAmount,
+                    isInRange: true,
+                    amount0OnAave: 0,
+                    amount1OnAave: 0
+                });
             } else {
-                // Existing position - accumulate liquidity
                 position.liquidity += liquidityAmount;
             }
 
-            emit PositionAdded(params.sender, positionKey, true, liquidityAmount);
-
+            emit OntraPositionAdded(params.sender, positionKey, true, liquidityAmount);
             return abi.encode(liquidityAmount);
         } else {
             // Position is out of range: deposit to Aave
@@ -396,25 +312,23 @@ contract OntraHook is BaseHook, IOntra {
                 _aaveDeposit(params.key.currency1, params.amount1);
             }
 
-            // Update or create position info with amounts on Aave
             if (position.owner == address(0)) {
-                // New position
-                position.owner = params.sender;
-                position.poolId = params.key.toId();
-                position.tickLower = params.tickLower;
-                position.tickUpper = params.tickUpper;
-                position.liquidity = 0;
-                position.isInRange = false;
-                position.amount0OnAave = params.amount0;
-                position.amount1OnAave = params.amount1;
+                _positions[positionKey] = PositionInfo({
+                    owner: params.sender,
+                    poolId: params.key.toId(),
+                    tickLower: params.tickLower,
+                    tickUpper: params.tickUpper,
+                    liquidity: 0,
+                    isInRange: false,
+                    amount0OnAave: params.amount0,
+                    amount1OnAave: params.amount1
+                });
             } else {
-                // Existing position - accumulate amounts on Aave
                 position.amount0OnAave += params.amount0;
                 position.amount1OnAave += params.amount1;
             }
 
-            emit PositionAdded(params.sender, positionKey, false, 0);
-
+            emit OntraPositionAdded(params.sender, positionKey, false, 0);
             // No liquidity is added to the pool when depositing to Aave
             return abi.encode(uint128(0));
         }
@@ -422,17 +336,13 @@ contract OntraHook is BaseHook, IOntra {
 
     function _handleRemoveLiquidity(CallbackData memory params) internal returns (bytes memory) {
         bytes32 positionKey = getPositionKey(params.sender, params.key.toId(), params.tickLower, params.tickUpper);
-        PositionInfo storage position = positions[positionKey];
-
-        // Verify ownership (except during rebalancing where sender is already verified)
-        if (!params.isRebalancing) {
-            require(position.owner == params.sender, "Not position owner");
-        }
+        PositionInfo storage position = _positions[positionKey];
 
         uint256 amount0;
         uint256 amount1;
 
         uint128 liquidityToRemove = uint128(uint256(-params.liquidityDelta));
+        if (position.owner == address(0)) revert OntraNoPosition();
         if (position.isInRange) {
             // Remove liquidity from pool
             (BalanceDelta delta,) = poolManager.modifyLiquidity(
@@ -448,7 +358,6 @@ contract OntraHook is BaseHook, IOntra {
             // Take the tokens and send to user (delta should be positive when removing liquidity)
             amount0 = uint256(uint128(delta.amount0()));
             amount1 = uint256(uint128(delta.amount1()));
-
             if (params.isRebalancing) {
                 // When rebalancing, hook receives the tokens (will deposit to Aave)
                 if (amount0 > 0) {
@@ -467,8 +376,7 @@ contract OntraHook is BaseHook, IOntra {
                 }
             }
 
-            // Update position - subtract removed liquidity
-            require(position.liquidity >= liquidityToRemove, "Insufficient liquidity");
+            if (position.liquidity < liquidityToRemove) revert OntraNotEnoughLiquidity();
             position.liquidity -= liquidityToRemove;
         } else {
             // Withdraw from Aave - position is out of range
@@ -539,10 +447,10 @@ contract OntraHook is BaseHook, IOntra {
 
         // If position is fully removed, delete it
         if (position.liquidity == 0 && position.amount0OnAave == 0 && position.amount1OnAave == 0) {
-            delete positions[positionKey];
+            delete _positions[positionKey];
         }
 
-        emit PositionRemoved(params.sender, positionKey, amount0, amount1);
+        emit OntraPositionRemoved(params.sender, positionKey, amount0, amount1);
 
         return abi.encode(amount0, amount1);
     }

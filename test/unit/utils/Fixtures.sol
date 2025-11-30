@@ -4,21 +4,8 @@ pragma solidity ^0.8.0;
 import {Test} from "forge-std/Test.sol";
 import {Deployers} from "@uniswap/v4-core/test/utils/Deployers.sol";
 import {MockERC20} from "solady/test/utils/mocks/MockERC20.sol";
-import {PoolManager} from "v4-core/PoolManager.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Currency} from "v4-core/types/Currency.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
-import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
-import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
-import {IPool} from "aave-v3/contracts/interfaces/IPool.sol";
-import {IAToken} from "aave-v3/contracts/interfaces/IAToken.sol";
-import {DataTypes} from "aave-v3/contracts/protocol/libraries/types/DataTypes.sol";
-import {console} from "forge-std/console.sol";
 
 import {MockAavePool} from "./MockAavePool.sol";
 

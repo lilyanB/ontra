@@ -191,30 +191,51 @@ contract OntraHook is BaseHook, IOntra {
 
         uint256 amount0 = position.amount0OnAave;
         uint256 amount1 = position.amount1OnAave;
+
+        // Withdraw from Aave and capture profits
+        uint256 profit0;
+        uint256 profit1;
+
         if (amount0 > 0) {
-            _aaveWithdraw(key.currency0, amount0);
+            uint256 withdrawn0 = _aaveWithdraw(key.currency0, amount0);
+            if (withdrawn0 > amount0) {
+                profit0 = withdrawn0 - amount0;
+            }
         }
         if (amount1 > 0) {
-            _aaveWithdraw(key.currency1, amount1);
+            uint256 withdrawn1 = _aaveWithdraw(key.currency1, amount1);
+            if (withdrawn1 > amount1) {
+                profit1 = withdrawn1 - amount1;
+            }
         }
 
-        // Calculate liquidity and add to pool via unlock callback (using owner's position)
-        bytes memory result = poolManager.unlock(
-            abi.encode(
-                CallbackData({
-                    sender: owner,
-                    key: key,
-                    tickLower: tickLower,
-                    tickUpper: tickUpper,
-                    liquidityDelta: int256(uint256(type(uint128).max)),
-                    amount0: amount0,
-                    amount1: amount1,
-                    isAdd: true,
-                    isRebalancing: true
-                })
-            )
+        // Add liquidity to pool (using principal amounts only)
+        uint128 liquidity = abi.decode(
+            poolManager.unlock(
+                abi.encode(
+                    CallbackData({
+                        sender: owner,
+                        key: key,
+                        tickLower: tickLower,
+                        tickUpper: tickUpper,
+                        liquidityDelta: int256(uint256(type(uint128).max)),
+                        amount0: amount0,
+                        amount1: amount1,
+                        isAdd: true,
+                        isRebalancing: true
+                    })
+                )
+            ),
+            (uint128)
         );
-        uint128 liquidity = abi.decode(result, (uint128));
+
+        // Distribute profits to LPs
+        if (profit0 > 0 || profit1 > 0) {
+            key.currency0.settle(poolManager, address(this), profit0, false);
+            key.currency1.settle(poolManager, address(this), profit1, false);
+            poolManager.donate(key, profit0, profit1, "");
+            emit OntraAaveProfitsDistributed(positionKey, profit0, profit1);
+        }
 
         position.liquidity = liquidity;
         position.isInRange = true;

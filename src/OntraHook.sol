@@ -200,12 +200,14 @@ contract OntraHook is BaseHook, IOntra {
             uint256 withdrawn0 = _aaveWithdraw(key.currency0, amount0);
             if (withdrawn0 > amount0) {
                 profit0 = withdrawn0 - amount0;
+                key.currency0.settle(poolManager, address(this), profit0, false);
             }
         }
         if (amount1 > 0) {
             uint256 withdrawn1 = _aaveWithdraw(key.currency1, amount1);
             if (withdrawn1 > amount1) {
                 profit1 = withdrawn1 - amount1;
+                key.currency1.settle(poolManager, address(this), profit1, false);
             }
         }
 
@@ -231,8 +233,6 @@ contract OntraHook is BaseHook, IOntra {
 
         // Distribute profits to LPs
         if (profit0 > 0 || profit1 > 0) {
-            key.currency0.settle(poolManager, address(this), profit0, false);
-            key.currency1.settle(poolManager, address(this), profit1, false);
             poolManager.donate(key, profit0, profit1, "");
             emit OntraAaveProfitsDistributed(positionKey, profit0, profit1);
         }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -99,25 +100,31 @@ contract TestRebalanceToAave is OntraHookFixture {
         // Rebalance to Aave
         hook.rebalanceToAave(address(this), key, tickLower, tickUpper);
 
-        // Verify position state after rebalancing
+        // Verify position state after rebalancing - check owner and poolId
         {
-            (,,,, uint128 liquidityAfter, bool isInRangeAfter, uint256 amount0OnAaveAfter, uint256 amount1OnAaveAfter) =
-                hook._positions(positionKey);
+            (address ownerAfter, PoolId poolIdAfter,,,,,,) = hook._positions(positionKey);
+            assertEq(ownerAfter, address(this), "Owner should remain unchanged");
+            assertEq(PoolId.unwrap(poolIdAfter), PoolId.unwrap(key.toId()), "PoolId should remain unchanged");
+        }
 
+        // Verify liquidity and range status
+        {
+            (,,,, uint128 liquidityAfter, bool isInRangeAfter,,) = hook._positions(positionKey);
             assertEq(liquidityAfter, 0, "Liquidity should be 0 after rebalancing");
             assertEq(isInRangeAfter, false, "Position should not be in range after rebalancing");
+        }
 
-            // Verify funds were deposited to Aave
-            uint256 aaveToken0After = aavePool.getUserBalance(address(hook), address(token0));
-            uint256 aaveToken1After = aavePool.getUserBalance(address(hook), address(token1));
+        // Verify Aave deposits
+        {
+            (,,,,,, uint256 amount0OnAaveAfter, uint256 amount1OnAaveAfter) = hook._positions(positionKey);
+            uint256 expectedAmount0 = aavePool.getUserBalance(address(hook), address(token0)) - aaveToken0Before;
+            uint256 expectedAmount1 = aavePool.getUserBalance(address(hook), address(token1)) - aaveToken1Before;
 
-            // Calculate expected amounts deposited
-            uint256 expectedToken0Deposited = aaveToken0After - aaveToken0Before;
-            uint256 expectedToken1Deposited = aaveToken1After - aaveToken1Before;
-
-            // Verify the amounts match what's tracked in the position
-            assertEq(amount0OnAaveAfter, expectedToken0Deposited, "Token0 on Aave should match deposit");
-            assertEq(amount1OnAaveAfter, expectedToken1Deposited, "Token1 on Aave should match deposit");
+            assertEq(amount0OnAaveAfter, expectedAmount0, "Token0 on Aave should match deposit");
+            assertEq(amount1OnAaveAfter, expectedAmount1, "Token1 on Aave should match deposit");
+            assertEq(amount0OnAaveAfter, expectedAmount0, "Should have exact token0 amount on Aave");
+            // When price moves below, token1 should be minimal or zero
+            assertEq(amount1OnAaveAfter, 0, "Should have no token1 on Aave when price is below range");
         }
     }
 
@@ -226,13 +233,29 @@ contract TestRebalanceToAave is OntraHookFixture {
         vm.prank(otherUser);
         hook.rebalanceToAave(address(this), key, tickLower, tickUpper);
 
-        // Verify position was rebalanced
+        // Verify position was rebalanced - check owner and poolId
         bytes32 positionKey = hook.getPositionKey(address(this), key.toId(), tickLower, tickUpper);
         {
-            (,,,, uint128 liquidityAfter, bool isInRangeAfter,,) = hook._positions(positionKey);
+            (address ownerAfter, PoolId poolIdAfter,,,,,,) = hook._positions(positionKey);
+            assertEq(ownerAfter, address(this), "Owner should remain unchanged");
+            assertEq(PoolId.unwrap(poolIdAfter), PoolId.unwrap(key.toId()), "PoolId should remain unchanged");
+        }
 
+        // Verify liquidity and range status
+        {
+            (,,,, uint128 liquidityAfter, bool isInRangeAfter,,) = hook._positions(positionKey);
             assertEq(liquidityAfter, 0, "Liquidity should be 0 after rebalancing");
             assertEq(isInRangeAfter, false, "Position should not be in range after rebalancing");
+        }
+
+        // Verify Aave deposits
+        {
+            (,,,,,, uint256 amount0OnAaveAfter, uint256 amount1OnAaveAfter) = hook._positions(positionKey);
+            uint256 expectedAmount0 = aavePool.getUserBalance(address(hook), address(token0));
+
+            assertEq(amount0OnAaveAfter, expectedAmount0, "Should have exact token0 amount on Aave");
+            // When price moves below, token1 should be zero
+            assertEq(amount1OnAaveAfter, 0, "Should have no token1 on Aave when price is below range");
         }
     }
 
@@ -272,22 +295,29 @@ contract TestRebalanceToAave is OntraHookFixture {
         // Rebalance to Aave
         hook.rebalanceToAave(address(this), key, tickLower, tickUpper);
 
-        // Verify position state after rebalancing
+        // Verify position state after rebalancing - check owner and poolId
         bytes32 positionKey = hook.getPositionKey(address(this), key.toId(), tickLower, tickUpper);
         {
-            (,,,, uint128 liquidityAfter, bool isInRangeAfter,,) = hook._positions(positionKey);
+            (address ownerAfter, PoolId poolIdAfter,,,,,,) = hook._positions(positionKey);
+            assertEq(ownerAfter, address(this), "Owner should remain unchanged");
+            assertEq(PoolId.unwrap(poolIdAfter), PoolId.unwrap(key.toId()), "PoolId should remain unchanged");
+        }
 
+        // Verify liquidity and range status
+        {
+            (,,,, uint128 liquidityAfter, bool isInRangeAfter,,) = hook._positions(positionKey);
             assertEq(liquidityAfter, 0, "Liquidity should be 0 after rebalancing");
             assertEq(isInRangeAfter, false, "Position should not be in range after rebalancing");
+        }
 
-            // When price moves above, we should have mostly token1
-            uint256 aaveToken1After = aavePool.getUserBalance(address(hook), address(token1));
-            uint256 expectedToken1Deposited = aaveToken1After - aaveToken1Before;
-            assertEq(
-                expectedToken1Deposited,
-                aaveToken1After - aaveToken1Before,
-                "Token1 deposited should match balance change"
-            );
+        // Verify Aave deposits - when price moves above, should have mostly token1
+        {
+            (,,,,,, uint256 amount0OnAaveAfter, uint256 amount1OnAaveAfter) = hook._positions(positionKey);
+            uint256 expectedAmount1 = aavePool.getUserBalance(address(hook), address(token1)) - aaveToken1Before;
+
+            assertEq(amount1OnAaveAfter, expectedAmount1, "Token1 on Aave should match deposit");
+            assertEq(amount1OnAaveAfter, expectedAmount1, "Should have exact token1 amount on Aave");
+            assertEq(amount0OnAaveAfter, 0, "Should have no token0 on Aave when price is above range");
         }
     }
 }

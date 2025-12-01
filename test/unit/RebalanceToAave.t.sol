@@ -5,8 +5,6 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
-import {BalanceDelta, toBalanceDelta} from "v4-core/types/BalanceDelta.sol";
-import {SwapParams} from "v4-core/types/PoolOperation.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 import {OntraHookFixture} from "./utils/Fixtures.sol";
@@ -32,7 +30,7 @@ contract TestRebalanceToAave is OntraHookFixture {
 
         // Add liquidity (should be active initially since we set up the position below)
         // We need to make the position in range first, then move the price
-        uint128 liquidityAdded = hook.addLiquidity(key, tickLower, tickUpper, amount0Desired, amount1Desired);
+        hook.addLiquidity(key, tickLower, tickUpper, amount0Desired, amount1Desired);
 
         // Verify position is on Aave initially (since it's out of range)
         bytes32 positionKey = hook.getPositionKey(address(this), key.toId(), tickLower, tickUpper);

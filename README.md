@@ -21,6 +21,14 @@ Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings ins
 - [ ] Write comprehensive tests
 - [ ] Optimize gas usage
 - [ ] Prepare documentation
+- [ ] Deploy to testnet
+- [ ] Implement front-end interface
+- [ ] Implement subgraph for event indexing
+
+Outside of scope for the Hookathon:
+
+- [ ] implement router for safety checks
+- [ ] Deploy to mainnet
 
 ## Specifications
 

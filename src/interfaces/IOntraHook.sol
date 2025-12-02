@@ -153,6 +153,7 @@ interface IOntraHook {
 
     /**
      * @notice Add liquidity through the hook - tokens are deposited to Aave.
+     * @dev Should be called from a contract that makes safety checks, like the {OntraRouter}.
      * @param key PoolKey of the pool.
      * @param tickLower Lower tick of the position.
      * @param tickUpper Upper tick of the position.

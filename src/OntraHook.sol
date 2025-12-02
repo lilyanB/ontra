@@ -168,14 +168,9 @@ contract OntraHook is BaseHook, IOntraHook {
         );
         (uint256 amount0, uint256 amount1) = abi.decode(result, (uint256, uint256));
 
-        if (amount0 > 0) {
-            _aaveDeposit(key.currency0, amount0);
-        }
-        if (amount1 > 0) {
-            _aaveDeposit(key.currency1, amount1);
-        }
+        _aaveDeposit(key.currency0, amount0);
+        _aaveDeposit(key.currency1, amount1);
 
-        // Update position state - accumulate amounts if there were already some on Aave
         position.amount0OnAave += amount0;
         position.amount1OnAave += amount1;
         position.liquidity = 0;
@@ -279,13 +274,13 @@ contract OntraHook is BaseHook, IOntraHook {
 
         if (isInRange) {
             // Calculate liquidity based on current price and desired amounts
-            uint160 sqrtPriceX96Current = TickMath.getSqrtPriceAtTick(currentTick);
-            uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(params.tickLower);
-            uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(params.tickUpper);
-            // Calculate actual liquidity amount
+            (uint160 sqrtPriceX96Current, uint160 sqrtPriceX96Lower, uint160 sqrtPriceX96Upper) =
+                _getSqrtPrices(params.tickLower, params.tickUpper, currentTick);
+
             uint128 liquidityAmount = LiquidityAmounts.getLiquidityForAmounts(
                 sqrtPriceX96Current, sqrtPriceX96Lower, sqrtPriceX96Upper, params.amount0, params.amount1
             );
+
             // Add liquidity to pool
             (BalanceDelta delta,) = poolManager.modifyLiquidity(
                 params.key,
@@ -297,32 +292,17 @@ contract OntraHook is BaseHook, IOntraHook {
                 }),
                 ""
             );
-            if (params.isRebalancing) {
-                // When rebalancing, hook provides the tokens (already withdrawn from Aave)
-                // Settle only the liquidity amounts
-                if (delta.amount0() < 0) {
-                    params.key.currency0.settle(poolManager, address(this), uint256(uint128(-delta.amount0())), false);
-                }
-                if (delta.amount1() < 0) {
-                    params.key.currency1.settle(poolManager, address(this), uint256(uint128(-delta.amount1())), false);
-                }
 
-                // Donate profits to LPs (creates a negative delta that must be settled)
-                if (params.profit0 > 0 || params.profit1 > 0) {
-                    poolManager.donate(params.key, params.profit0, params.profit1, "");
-                    // Settle the donation delta
-                    if (params.profit0 > 0) {
-                        params.key.currency0.settle(poolManager, address(this), params.profit0, false);
-                    }
-                    if (params.profit1 > 0) {
-                        params.key.currency1.settle(poolManager, address(this), params.profit1, false);
-                    }
-                    emit OntraAaveProfitsDistributed(positionKey, params.profit0, params.profit1);
-                }
-            } else {
-                // Normal case: user provides the tokens
-                params.key.currency0.settle(poolManager, params.sender, uint256(uint128(-delta.amount0())), false);
-                params.key.currency1.settle(poolManager, params.sender, uint256(uint128(-delta.amount1())), false);
+            address settler = params.isRebalancing ? address(this) : params.sender;
+            _settleCurrency(params.key.currency0, settler, uint256(uint128(-delta.amount0())));
+            _settleCurrency(params.key.currency1, settler, uint256(uint128(-delta.amount1())));
+
+            // Donate profits to LPs if rebalancing
+            if (params.isRebalancing && (params.profit0 > 0 || params.profit1 > 0)) {
+                poolManager.donate(params.key, params.profit0, params.profit1, "");
+                _settleCurrency(params.key.currency0, address(this), params.profit0);
+                _settleCurrency(params.key.currency1, address(this), params.profit1);
+                emit OntraAaveProfitsDistributed(positionKey, params.profit0, params.profit1);
             }
 
             if (position.owner == address(0)) {
@@ -336,22 +316,23 @@ contract OntraHook is BaseHook, IOntraHook {
                     amount0OnAave: 0,
                     amount1OnAave: 0
                 });
-            } else {
+            } else if (position.isInRange) {
                 position.liquidity += liquidityAmount;
+            } else if (params.isRebalancing) {
+                position.liquidity = liquidityAmount;
+                position.isInRange = true;
+                position.amount0OnAave = 0;
+                position.amount1OnAave = 0;
+            } else {
+                revert("Position on Aave, rebalance first");
             }
 
             emit OntraPositionAdded(params.sender, positionKey, true, liquidityAmount);
             return abi.encode(liquidityAmount);
         } else {
             // Position is out of range: deposit to Aave
-            if (params.amount0 > 0) {
-                IERC20(Currency.unwrap(params.key.currency0)).transferFrom(params.sender, address(this), params.amount0);
-                _aaveDeposit(params.key.currency0, params.amount0);
-            }
-            if (params.amount1 > 0) {
-                IERC20(Currency.unwrap(params.key.currency1)).transferFrom(params.sender, address(this), params.amount1);
-                _aaveDeposit(params.key.currency1, params.amount1);
-            }
+            _transferAndDepositToAave(params.key.currency0, params.sender, params.amount0);
+            _transferAndDepositToAave(params.key.currency1, params.sender, params.amount1);
 
             if (position.owner == address(0)) {
                 _positions[positionKey] = PositionInfo({
@@ -365,12 +346,15 @@ contract OntraHook is BaseHook, IOntraHook {
                     amount1OnAave: params.amount1
                 });
             } else {
+                if (position.isInRange) {
+                    revert("Position in pool, cannot add to Aave. Rebalance first or use different range");
+                }
+                require(position.liquidity == 0, "Position has liquidity in pool");
                 position.amount0OnAave += params.amount0;
                 position.amount1OnAave += params.amount1;
             }
 
             emit OntraPositionAdded(params.sender, positionKey, false, 0);
-            // No liquidity is added to the pool when depositing to Aave
             return abi.encode(uint128(0));
         }
     }
@@ -396,104 +380,43 @@ contract OntraHook is BaseHook, IOntraHook {
                 }),
                 ""
             );
-            // Take the tokens and send to user (delta should be positive when removing liquidity)
+
             amount0 = uint256(uint128(delta.amount0()));
             amount1 = uint256(uint128(delta.amount1()));
-            if (params.isRebalancing) {
-                // When rebalancing, hook receives the tokens (will deposit to Aave)
-                if (amount0 > 0) {
-                    params.key.currency0.take(poolManager, address(this), amount0, false);
-                }
-                if (amount1 > 0) {
-                    params.key.currency1.take(poolManager, address(this), amount1, false);
-                }
-            } else {
-                // Normal case: send tokens to user
-                if (amount0 > 0) {
-                    params.key.currency0.take(poolManager, params.sender, amount0, false);
-                }
-                if (amount1 > 0) {
-                    params.key.currency1.take(poolManager, params.sender, amount1, false);
-                }
-            }
+
+            address recipient = params.isRebalancing ? address(this) : params.sender;
+            _takeCurrency(params.key.currency0, recipient, amount0);
+            _takeCurrency(params.key.currency1, recipient, amount1);
 
             if (position.liquidity < liquidityToRemove) revert OntraNotEnoughLiquidity();
             position.liquidity -= liquidityToRemove;
         } else {
-            {
-                // Withdraw from Aave - position is out of range
+            // Withdraw from Aave - position is out of range
+            uint128 totalVirtualLiquidity = _calculateVirtualLiquidity(
+                position.amount0OnAave, position.amount1OnAave, params.tickLower, params.tickUpper
+            );
 
-                // Calculate total "virtual liquidity" that the current Aave amounts represent
-                uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(params.tickLower);
-                uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(params.tickUpper);
+            require(totalVirtualLiquidity > 0, "No liquidity on Aave");
+            require(liquidityToRemove <= totalVirtualLiquidity, "Insufficient liquidity on Aave");
 
-                // Calculate total virtual liquidity from amounts on Aave
-                uint128 totalVirtualLiquidity;
-                if (position.amount0OnAave > 0 && position.amount1OnAave > 0) {
-                    {
-                        // Both tokens on Aave - calculate liquidity for both and take the one that gives more liquidity
-                        uint128 liq0 = LiquidityAmounts.getLiquidityForAmount0(
-                            sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount0OnAave
-                        );
-                        uint128 liq1 = LiquidityAmounts.getLiquidityForAmount1(
-                            sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount1OnAave
-                        );
-                        totalVirtualLiquidity = liq0 > liq1 ? liq0 : liq1;
-                    }
-                } else if (position.amount0OnAave > 0) {
-                    totalVirtualLiquidity = LiquidityAmounts.getLiquidityForAmount0(
-                        sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount0OnAave
-                    );
-                } else if (position.amount1OnAave > 0) {
-                    totalVirtualLiquidity = LiquidityAmounts.getLiquidityForAmount1(
-                        sqrtPriceX96Lower, sqrtPriceX96Upper, position.amount1OnAave
-                    );
-                }
-
-                // Calculate proportional amounts to withdraw
-                require(totalVirtualLiquidity > 0, "No liquidity on Aave");
-                require(liquidityToRemove <= totalVirtualLiquidity, "Insufficient liquidity on Aave");
-
-                if (liquidityToRemove >= totalVirtualLiquidity) {
-                    amount0 = position.amount0OnAave;
-                    amount1 = position.amount1OnAave;
-                } else {
-                    // Withdraw proportionally
-                    amount0 = position.amount0OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
-                    amount1 = position.amount1OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
-                }
+            if (liquidityToRemove >= totalVirtualLiquidity) {
+                amount0 = position.amount0OnAave;
+                amount1 = position.amount1OnAave;
+            } else {
+                amount0 = position.amount0OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
+                amount1 = position.amount1OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
             }
 
             // Withdraw from Aave and distribute profits
-            if (amount0 > 0) {
-                // Withdraw from Aave - returns actual amount including interest
-                uint256 withdrawn0 = _aaveWithdraw(params.key.currency0, amount0);
-                // Send tracked amount to user
-                IERC20(Currency.unwrap(params.key.currency0)).transfer(params.sender, amount0);
-                if (withdrawn0 > amount0) {
-                    uint256 profit0 = withdrawn0 - amount0;
-                    params.key.currency0.settle(poolManager, address(this), profit0, false);
-                    poolManager.donate(params.key, profit0, 0, "");
-                    emit OntraAaveProfitsDistributed(positionKey, profit0, 0);
-                }
+            amount0 = _withdrawAndDistributeProfit(
+                positionKey, params.key, params.key.currency0, amount0, params.sender, true
+            );
+            amount1 = _withdrawAndDistributeProfit(
+                positionKey, params.key, params.key.currency1, amount1, params.sender, false
+            );
 
-                position.amount0OnAave -= amount0;
-            }
-
-            if (amount1 > 0) {
-                // Withdraw from Aave - returns actual amount including interest
-                uint256 withdrawn1 = _aaveWithdraw(params.key.currency1, amount1);
-                // Send tracked amount to user
-                IERC20(Currency.unwrap(params.key.currency1)).transfer(params.sender, amount1);
-                if (withdrawn1 > amount1) {
-                    uint256 profit1 = withdrawn1 - amount1;
-                    params.key.currency1.settle(poolManager, address(this), profit1, false);
-                    poolManager.donate(params.key, 0, profit1, "");
-                    emit OntraAaveProfitsDistributed(positionKey, 0, profit1);
-                }
-
-                position.amount1OnAave -= amount1;
-            }
+            position.amount0OnAave -= amount0;
+            position.amount1OnAave -= amount1;
         }
 
         // If position is fully removed, delete it (but not during rebalancing)
@@ -513,6 +436,34 @@ contract OntraHook is BaseHook, IOntraHook {
     }
 
     /**
+     * @notice Calculates virtual liquidity from Aave amounts.
+     * @param amount0OnAave The amount of token0 on Aave.
+     * @param amount1OnAave The amount of token1 on Aave.
+     * @param tickLower The lower tick of the position.
+     * @param tickUpper The upper tick of the position.
+     * @return virtualLiquidity_ The calculated virtual liquidity.
+     */
+    function _calculateVirtualLiquidity(uint256 amount0OnAave, uint256 amount1OnAave, int24 tickLower, int24 tickUpper)
+        internal
+        pure
+        returns (uint128 virtualLiquidity_)
+    {
+        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
+
+        if (amount0OnAave > 0 && amount1OnAave > 0) {
+            uint128 liq0 = LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96Lower, sqrtPriceX96Upper, amount0OnAave);
+            uint128 liq1 = LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1OnAave);
+            return liq0 > liq1 ? liq0 : liq1;
+        } else if (amount0OnAave > 0) {
+            return LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96Lower, sqrtPriceX96Upper, amount0OnAave);
+        } else if (amount1OnAave > 0) {
+            return LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1OnAave);
+        }
+        return virtualLiquidity_;
+    }
+
+    /**
      * @notice Deposits tokens into Aave.
      * @param asset The asset being deposited.
      * @param amount Amount to deposit.
@@ -526,9 +477,97 @@ contract OntraHook is BaseHook, IOntraHook {
      * @notice Withdraws tokens from Aave.
      * @param asset The asset being withdrawn.
      * @param amount Amount to withdraw.
-     * @return actualAmount The actual amount withdrawn (may include interest).
+     * @return amountWithdrawn The amount withdrawn.
      */
-    function _aaveWithdraw(Currency asset, uint256 amount) internal returns (uint256 actualAmount) {
-        actualAmount = AAVE_POOL.withdraw(Currency.unwrap(asset), amount, address(this));
+    function _aaveWithdraw(Currency asset, uint256 amount) internal returns (uint256 amountWithdrawn) {
+        amountWithdrawn = AAVE_POOL.withdraw(Currency.unwrap(asset), amount, address(this));
+    }
+
+    /**
+     * @notice Helper to settle currency from a specific address.
+     * @param currency The currency to settle.
+     * @param from The address to settle from.
+     * @param amount The amount to settle.
+     */
+    function _settleCurrency(Currency currency, address from, uint256 amount) internal {
+        if (amount > 0) {
+            currency.settle(poolManager, from, amount, false);
+        }
+    }
+
+    /**
+     * @notice Helper to take currency to a specific address.
+     * @param currency The currency to take.
+     * @param to The address to send the currency to.
+     * @param amount The amount to take.
+     */
+    function _takeCurrency(Currency currency, address to, uint256 amount) internal {
+        if (amount > 0) {
+            currency.take(poolManager, to, amount, false);
+        }
+    }
+
+    /**
+     * @notice Withdraws from Aave, sends principal to user, and donates profit.
+     * @param positionKey The unique key of the position.
+     * @param key The PoolKey of the pool.
+     * @param currency The currency to withdraw.
+     * @param amount The principal amount to withdraw and send to the user.
+     * @param recipient The address to send the principal to.
+     * @param isToken0 Whether the currency is token0 (true) or token1 (false).
+     */
+    function _withdrawAndDistributeProfit(
+        bytes32 positionKey,
+        PoolKey memory key,
+        Currency currency,
+        uint256 amount,
+        address recipient,
+        bool isToken0
+    ) internal returns (uint256 amount_) {
+        if (amount == 0) return 0;
+
+        uint256 withdrawn = _aaveWithdraw(currency, amount);
+        IERC20(Currency.unwrap(currency)).transfer(recipient, amount);
+
+        if (withdrawn > amount) {
+            uint256 profit = withdrawn - amount;
+            currency.settle(poolManager, address(this), profit, false);
+            poolManager.donate(key, isToken0 ? profit : 0, isToken0 ? 0 : profit, "");
+            emit OntraAaveProfitsDistributed(positionKey, isToken0 ? profit : 0, isToken0 ? 0 : profit);
+        }
+
+        amount_ = amount;
+    }
+
+    /**
+     * @notice Transfers from user and deposits to Aave.
+     * @param currency The currency to transfer and deposit.
+     * @param from The address to transfer from.
+     * @param amount The amount to transfer and deposit.
+     */
+    function _transferAndDepositToAave(Currency currency, address from, uint256 amount) internal {
+        if (amount > 0) {
+            IERC20(Currency.unwrap(currency)).transferFrom(from, address(this), amount);
+            _aaveDeposit(currency, amount);
+        }
+    }
+
+    /**
+     * @notice Calculates sqrt prices for a tick range.
+     * @param tickLower The lower tick.
+     * @param tickUpper The upper tick.
+     * @param currentTick The current tick.
+     * @return sqrtPriceX96Current_ The current sqrt price.
+     * @return sqrtPriceX96Lower_ The lower sqrt price.
+     * @return sqrtPriceX96Upper_ The upper sqrt price.
+     */
+    function _getSqrtPrices(int24 tickLower, int24 tickUpper, int24 currentTick)
+        internal
+        pure
+        returns (uint160 sqrtPriceX96Current_, uint160 sqrtPriceX96Lower_, uint160 sqrtPriceX96Upper_)
+    {
+        sqrtPriceX96Current_ = TickMath.getSqrtPriceAtTick(currentTick);
+        sqrtPriceX96Lower_ = TickMath.getSqrtPriceAtTick(tickLower);
+        sqrtPriceX96Upper_ = TickMath.getSqrtPriceAtTick(tickUpper);
     }
 }

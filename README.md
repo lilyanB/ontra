@@ -13,7 +13,6 @@ Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings ins
 - [x] Implement addLiquidity with Aave integration
 - [x] Implement removeLiquidity with Aave integration
 - [x] Implement rebalanceToAave function
-- [progress] Implement rebalanceToPool function
 - [ ] Implement Limit Orders
 - [ ] Implement TWAP Orders
 - [ ] Implement Trailing Stop Orders

@@ -5,12 +5,9 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
-import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
-import {Vm} from "forge-std/Vm.sol";
 
 import {OntraHookFixture} from "./utils/Fixtures.sol";
-import {MockAavePool} from "./utils/MockAavePool.sol";
 
 contract TestRemoveLiquidity is OntraHookFixture {
     using StateLibrary for IPoolManager;
@@ -85,261 +82,86 @@ contract TestRemoveLiquidity is OntraHookFixture {
     }
 
     /**
-     * @notice Test removing liquidity outside current tick range (should withdraw from Aave)
-     * When liquidity is outside the current range, it should be in Aave
+     * @notice Test removing partial liquidity from pool
      */
-    function test_removeLiquidity_outsideCurrentTickRange_above() public {
+    function test_removeLiquidity_partial() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity above current tick using the hook
-        int24 tickLower = currentTick + 120;
-        int24 tickUpper = currentTick + 240;
-
-        uint256 amount1Desired = 100 ether;
-        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
-
-        MockAavePool mockAavePool = MockAavePool(address(aavePool));
-        uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
-
-        // Verify funds were deposited to Aave
-        assertGt(aaveBalanceBefore, 0);
-
-        // Calculate liquidity for the amount deposited
-        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
-        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
-        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-
-        uint128 liquidityToRemove =
-            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
-
-        // Now remove half liquidity using the hook
-        hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove / 2);
-
-        // Verify funds were withdrawn from Aave
-        uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
-        assertLt(aaveBalanceAfter, aaveBalanceBefore);
-    }
-
-    /**
-     * @notice Test removing liquidity below current tick range
-     * Token0 should be withdrawn from Aave
-     */
-    function test_removeLiquidity_outsideCurrentTickRange_below() public {
-        (, int24 currentTick,,) = manager.getSlot0(key.toId());
-
-        // Add liquidity below current tick using the hook
-        int24 tickLower = currentTick - 240;
-        int24 tickUpper = currentTick - 120;
+        // Add liquidity within current tick range
+        int24 tickLower = currentTick - 60;
+        int24 tickUpper = currentTick + 60;
 
         uint256 amount0Desired = 100 ether;
-        hook.addLiquidity(key, tickLower, tickUpper, amount0Desired, 0);
-
-        MockAavePool mockAavePool = MockAavePool(address(aavePool));
-        uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token0));
-
-        // Verify token0 was deposited to Aave
-        assertGt(aaveBalanceBefore, 0);
-
-        // Calculate liquidity for the amount deposited
-        // When position is below current price (all in token0), use getLiquidityForAmount0 directly
-        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
-        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint128 liquidityToRemove =
-            LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96Lower, sqrtPriceX96Upper, amount0Desired);
-
-        // Now remove half liquidity using the hook
-        hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove / 2);
-
-        // Verify token0 was withdrawn from Aave
-        uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token0));
-        assertLt(aaveBalanceAfter, aaveBalanceBefore);
-    }
-
-    /**
-     * @notice Test partial removal of liquidity from Aave
-     * Should only withdraw the proportional amount from Aave
-     */
-    function test_removeLiquidity_partial_fromAave() public {
-        (, int24 currentTick,,) = manager.getSlot0(key.toId());
-
-        // Add liquidity above current tick using the hook
-        int24 tickLower = currentTick + 120;
-        int24 tickUpper = currentTick + 240;
-
         uint256 amount1Desired = 100 ether;
-        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
 
-        MockAavePool mockAavePool = MockAavePool(address(aavePool));
-        uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
+        uint128 liquidityAdded = hook.addLiquidity(key, tickLower, tickUpper, amount0Desired, amount1Desired);
 
-        // Calculate liquidity for the amount deposited
-        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
-        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
-        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint128 totalLiquidity =
-            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
+        uint256 token0BalanceBefore = token0.balanceOf(address(this));
+        uint256 token1BalanceBefore = token1.balanceOf(address(this));
 
         // Remove half the liquidity
-        hook.removeLiquidity(key, tickLower, tickUpper, totalLiquidity / 2);
+        uint128 liquidityToRemove = liquidityAdded / 2;
+        (uint256 amount0Withdrawn, uint256 amount1Withdrawn) =
+            hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove);
 
-        uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
+        // Verify amounts were withdrawn
+        assertGt(amount0Withdrawn, 0, "Should withdraw some token0");
+        assertGt(amount1Withdrawn, 0, "Should withdraw some token1");
 
-        // Aave balance should have decreased but not to zero
-        assertLt(aaveBalanceAfter, aaveBalanceBefore);
-        assertGt(aaveBalanceAfter, 0);
+        // Verify balance changes
+        assertEq(
+            token0.balanceOf(address(this)) - token0BalanceBefore, amount0Withdrawn, "Token0 balance should increase"
+        );
+        assertEq(
+            token1.balanceOf(address(this)) - token1BalanceBefore, amount1Withdrawn, "Token1 balance should increase"
+        );
     }
 
     /**
-     * @notice Test removing all liquidity from Aave
-     * Should completely withdraw from Aave position
+     * @notice Test that removing liquidity from Aave position reverts
      */
-    function test_removeLiquidity_complete_fromAave() public {
+    function test_removeLiquidity_revertsIfOnAave() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity above current tick using the hook
+        // Add liquidity above current tick (goes to Aave)
         int24 tickLower = currentTick + 120;
         int24 tickUpper = currentTick + 240;
 
         hook.addLiquidity(key, tickLower, tickUpper, 0, 100 ether);
 
-        MockAavePool mockAavePool = MockAavePool(address(aavePool));
-        uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
-        assertGt(aaveBalanceBefore, 0);
-
-        // Calculate liquidity equivalent for the deposited amount
-        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
-        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
-        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-        uint128 liquidityToRemove =
-            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, 100 ether);
-
-        // Remove all liquidity
-        hook.removeLiquidity(key, tickLower, tickUpper, liquidityToRemove);
-
-        uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
-
-        // Aave balance should be significantly reduced (accounting for rounding)
-        assertLt(aaveBalanceAfter, aaveBalanceBefore / 10);
+        // Try to remove liquidity - should revert because it's on Aave, not in pool
+        vm.expectRevert();
+        hook.removeLiquidity(key, tickLower, tickUpper, 1);
     }
 
     /**
-     * @notice Test liquidity calculations are correct for withdrawal
-     * Verify that the amounts calculated match what's actually withdrawn
+     * @notice Test that removing more liquidity than available reverts
      */
-    function test_removeLiquidity_correctAmountCalculation() public {
+    function test_removeLiquidity_revertsIfNotEnough() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // Add liquidity above current tick using the hook
-        int24 tickLower = currentTick + 120;
-        int24 tickUpper = currentTick + 240;
+        // Add liquidity within current tick range
+        int24 tickLower = currentTick - 60;
+        int24 tickUpper = currentTick + 60;
 
-        uint256 amount1Desired = 100 ether;
-        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
+        uint128 liquidityAdded = hook.addLiquidity(key, tickLower, tickUpper, 10 ether, 10 ether);
 
-        MockAavePool mockAavePool = MockAavePool(address(aavePool));
-        uint256 aaveBalanceBefore = mockAavePool.getUserBalance(address(hook), address(token1));
-
-        // Calculate liquidity based on deposited amount
-        // When position is above current price (all in token1), use getLiquidityForAmount1 directly
-        uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
-        uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-
-        uint128 liquidityAmount =
-            LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
-
-        // Remove liquidity
-        (uint256 amount0Withdrawn, uint256 amount1Withdrawn) =
-            hook.removeLiquidity(key, tickLower, tickUpper, liquidityAmount);
-
-        uint256 aaveBalanceAfter = mockAavePool.getUserBalance(address(hook), address(token1));
-        uint256 withdrawn = aaveBalanceBefore - aaveBalanceAfter;
-
-        // The withdrawn amount should match what was returned
-        assertEq(amount0Withdrawn, 0, "No token0 should be withdrawn");
-        assertApproxEqAbs(withdrawn, amount1Withdrawn, 1e10, "Withdrawn amount should match");
+        // Try to remove more than available
+        vm.expectRevert();
+        hook.removeLiquidity(key, tickLower, tickUpper, liquidityAdded + 1);
     }
 
     /**
-     * @notice Test that Aave yield is distributed to the pool
-     * Add liquidity -> Simulate Aave yield -> Remove liquidity -> Verify profits go to pool
+     * @notice Test that removing from non-existent position reverts
      */
-    function test_removeLiquidity_aaveYieldDistributedToPool() public {
+    function test_removeLiquidity_revertsIfNoPosition() public {
         (, int24 currentTick,,) = manager.getSlot0(key.toId());
 
-        // First, add some in-range liquidity to the pool so donate() can work
-        // (donate requires in-range liquidity to receive the fees)
-        int24 inRangeTickLower = currentTick - 60;
-        int24 inRangeTickUpper = currentTick + 60;
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: inRangeTickLower, tickUpper: inRangeTickUpper, liquidityDelta: 100 ether, salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        int24 tickLower = currentTick - 60;
+        int24 tickUpper = currentTick + 60;
 
-        // Add liquidity above current tick (will go to Aave)
-        int24 tickLower = currentTick + 120;
-        int24 tickUpper = currentTick + 240;
-
-        uint256 amount1Desired = 100 ether;
-        hook.addLiquidity(key, tickLower, tickUpper, 0, amount1Desired);
-
-        MockAavePool mockAavePool = MockAavePool(address(aavePool));
-        assertEq(
-            mockAavePool.getUserBalance(address(hook), address(token1)), amount1Desired, "Should have deposited to Aave"
-        );
-
-        // Simulate Aave yield: 10% yield
-        uint256 yieldAmount = 10 ether;
-        mockAavePool.simulateYield(address(token1), yieldAmount);
-
-        // Get balances before withdrawal
-        uint256 poolBalanceBefore = token1.balanceOf(address(manager));
-        uint256 userBalanceBefore = token1.balanceOf(address(this));
-
-        // Calculate liquidity to remove
-        uint128 liquidityAmount;
-        {
-            uint160 sqrtPriceX96Lower = TickMath.getSqrtPriceAtTick(tickLower);
-            uint160 sqrtPriceX96Upper = TickMath.getSqrtPriceAtTick(tickUpper);
-            liquidityAmount =
-                LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96Lower, sqrtPriceX96Upper, amount1Desired);
-        }
-
-        bytes32 positionKey = hook.getPositionKey(address(this), key.toId(), tickLower, tickUpper);
-
-        // Start recording logs to check for the event
-        vm.recordLogs();
-        // Remove liquidity
-        (uint256 amount0Withdrawn, uint256 amount1Withdrawn) =
-            hook.removeLiquidity(key, tickLower, tickUpper, liquidityAmount);
-
-        // Check that OntraAaveProfitsDistributed event was emitted
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bool eventFound = false;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == keccak256("OntraAaveProfitsDistributed(bytes32,uint256,uint256)")) {
-                assertEq(logs[i].topics[1], positionKey, "Position key mismatch in event");
-                (uint256 profit0, uint256 profit1) = abi.decode(logs[i].data, (uint256, uint256));
-                assertEq(profit0, 0, "Profit0 should be 0");
-                assertEq(profit1, yieldAmount, "Profit1 should equal yield amount");
-                eventFound = true;
-                break;
-            }
-        }
-        assertTrue(eventFound, "OntraAaveProfitsDistributed event not emitted");
-        // User should receive only their original deposit
-        assertEq(amount0Withdrawn, 0, "No token0 should be withdrawn");
-        assertEq(amount1Withdrawn, amount1Desired, "User should receive their original amount");
-        assertEq(
-            token1.balanceOf(address(this)) - userBalanceBefore,
-            amount1Desired,
-            "User balance should increase by original amount"
-        );
-        // Pool should receive the yield
-        assertEq(
-            token1.balanceOf(address(manager)) - poolBalanceBefore, yieldAmount, "Pool should receive the yield amount"
-        );
+        // Try to remove without adding first
+        vm.expectRevert();
+        hook.removeLiquidity(key, tickLower, tickUpper, 1);
     }
 }

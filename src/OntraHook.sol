@@ -89,9 +89,7 @@ contract OntraHook is BaseHook, IOntraHook {
                     amount0: amount0Desired,
                     amount1: amount1Desired,
                     isAdd: true,
-                    isRebalancing: false,
-                    profit0: 0,
-                    profit1: 0
+                    isRebalancing: false
                 })
             )
         );
@@ -104,6 +102,13 @@ contract OntraHook is BaseHook, IOntraHook {
         external
         returns (uint256 amount0_, uint256 amount1_)
     {
+        bytes32 positionKey = getPositionKey(msg.sender, key.toId(), tickLower, tickUpper);
+        PositionInfo storage position = _positions[positionKey];
+
+        if (position.owner == address(0)) revert OntraNoPosition();
+        if (!position.isInRange) revert OntraPositionAlreadyInAave();
+        if (position.liquidity < liquidityToRemove) revert OntraNotEnoughLiquidity();
+
         bytes memory result = poolManager.unlock(
             abi.encode(
                 CallbackData({
@@ -115,14 +120,45 @@ contract OntraHook is BaseHook, IOntraHook {
                     amount0: 0,
                     amount1: 0,
                     isAdd: false,
-                    isRebalancing: false,
-                    profit0: 0,
-                    profit1: 0
+                    isRebalancing: false
                 })
             )
         );
 
         (amount0_, amount1_) = abi.decode(result, (uint256, uint256));
+    }
+
+    /// @inheritdoc IOntraHook
+    function removeTokensFromAave(
+        PoolKey calldata key,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amount0ToRemove,
+        uint256 amount1ToRemove
+    ) external returns (uint256 amount0_, uint256 amount1_) {
+        bytes32 positionKey = getPositionKey(msg.sender, key.toId(), tickLower, tickUpper);
+        PositionInfo storage position = _positions[positionKey];
+
+        if (position.owner == address(0)) revert OntraNoPosition();
+        if (position.isInRange) revert OntraPositionNotInAave();
+        if (position.amount0OnAave < amount0ToRemove || position.amount1OnAave < amount1ToRemove) {
+            revert OntraNotEnoughOnAave();
+        }
+
+        _withdrawFromAave(key.currency0, amount0ToRemove, msg.sender);
+        _withdrawFromAave(key.currency1, amount1ToRemove, msg.sender);
+
+        position.amount0OnAave -= amount0ToRemove;
+        position.amount1OnAave -= amount1ToRemove;
+
+        // If position is fully removed, delete it
+        if (position.liquidity == 0 && position.amount0OnAave == 0 && position.amount1OnAave == 0) {
+            delete _positions[positionKey];
+        }
+
+        emit OntraPositionRemoved(msg.sender, positionKey, amount0ToRemove, amount1ToRemove);
+
+        return (amount0ToRemove, amount1ToRemove);
     }
 
     /// @inheritdoc IOntraHook
@@ -160,9 +196,7 @@ contract OntraHook is BaseHook, IOntraHook {
                     amount0: 0,
                     amount1: 0,
                     isAdd: false,
-                    isRebalancing: true,
-                    profit0: 0,
-                    profit1: 0
+                    isRebalancing: true
                 })
             )
         );
@@ -177,69 +211,6 @@ contract OntraHook is BaseHook, IOntraHook {
         position.isInRange = false;
 
         emit OntraPositionRebalancedToAave(owner, positionKey, amount0, amount1);
-    }
-
-    /// @inheritdoc IOntraHook
-    function rebalanceToPool(address owner, PoolKey calldata key, int24 tickLower, int24 tickUpper) external {
-        bytes32 positionKey = getPositionKey(owner, key.toId(), tickLower, tickUpper);
-        PositionInfo storage position = _positions[positionKey];
-
-        if (position.owner == address(0)) revert OntraNoPosition();
-        if (position.isInRange) revert OntraPositionAlreadyInPool();
-
-        (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
-        require(tickLower <= currentTick && currentTick <= tickUpper, "Position not in range");
-
-        uint256 amount0 = position.amount0OnAave;
-        uint256 amount1 = position.amount1OnAave;
-
-        uint256 profit0;
-        uint256 profit1;
-        if (amount0 > 0) {
-            uint256 withdrawn0 = _aaveWithdraw(key.currency0, amount0);
-            if (withdrawn0 > amount0) {
-                profit0 = withdrawn0 - amount0;
-            }
-        }
-        if (amount1 > 0) {
-            uint256 withdrawn1 = _aaveWithdraw(key.currency1, amount1);
-            if (withdrawn1 > amount1) {
-                profit1 = withdrawn1 - amount1;
-            }
-        }
-
-        // Add liquidity to pool (using principal amounts only)
-        // The callback will handle settle and donate for profits
-        uint128 liquidity;
-        {
-            liquidity = abi.decode(
-                poolManager.unlock(
-                    abi.encode(
-                        CallbackData({
-                            sender: owner,
-                            key: key,
-                            tickLower: tickLower,
-                            tickUpper: tickUpper,
-                            liquidityDelta: int256(uint256(type(uint128).max)),
-                            amount0: amount0,
-                            amount1: amount1,
-                            isAdd: true,
-                            isRebalancing: true,
-                            profit0: profit0,
-                            profit1: profit1
-                        })
-                    )
-                ),
-                (uint128)
-            );
-        }
-
-        position.liquidity = liquidity;
-        position.isInRange = true;
-        position.amount0OnAave = 0;
-        position.amount1OnAave = 0;
-
-        emit OntraPositionRebalancedToPool(owner, positionKey, liquidity);
     }
 
     /* -------------------------------------------------------------------------- */
@@ -293,17 +264,8 @@ contract OntraHook is BaseHook, IOntraHook {
                 ""
             );
 
-            address settler = params.isRebalancing ? address(this) : params.sender;
-            _settleCurrency(params.key.currency0, settler, uint256(uint128(-delta.amount0())));
-            _settleCurrency(params.key.currency1, settler, uint256(uint128(-delta.amount1())));
-
-            // Donate profits to LPs if rebalancing
-            if (params.isRebalancing && (params.profit0 > 0 || params.profit1 > 0)) {
-                poolManager.donate(params.key, params.profit0, params.profit1, "");
-                _settleCurrency(params.key.currency0, address(this), params.profit0);
-                _settleCurrency(params.key.currency1, address(this), params.profit1);
-                emit OntraAaveProfitsDistributed(positionKey, params.profit0, params.profit1);
-            }
+            _settleCurrency(params.key.currency0, params.sender, uint256(uint128(-delta.amount0())));
+            _settleCurrency(params.key.currency1, params.sender, uint256(uint128(-delta.amount1())));
 
             if (position.owner == address(0)) {
                 _positions[positionKey] = PositionInfo({
@@ -318,16 +280,11 @@ contract OntraHook is BaseHook, IOntraHook {
                 });
             } else if (position.isInRange) {
                 position.liquidity += liquidityAmount;
-            } else if (params.isRebalancing) {
-                position.liquidity = liquidityAmount;
-                position.isInRange = true;
-                position.amount0OnAave = 0;
-                position.amount1OnAave = 0;
             } else {
                 revert("Position on Aave, rebalance first");
             }
 
-            emit OntraPositionAdded(params.sender, positionKey, true, liquidityAmount);
+            emit OntraPositionAdded(params.sender, positionKey, true, liquidityAmount, 0, 0);
             return abi.encode(liquidityAmount);
         } else {
             // Position is out of range: deposit to Aave
@@ -354,7 +311,7 @@ contract OntraHook is BaseHook, IOntraHook {
                 position.amount1OnAave += params.amount1;
             }
 
-            emit OntraPositionAdded(params.sender, positionKey, false, 0);
+            emit OntraPositionAdded(params.sender, positionKey, false, 0, params.amount0, params.amount1);
             return abi.encode(uint128(0));
         }
     }
@@ -363,61 +320,28 @@ contract OntraHook is BaseHook, IOntraHook {
         bytes32 positionKey = getPositionKey(params.sender, params.key.toId(), params.tickLower, params.tickUpper);
         PositionInfo storage position = _positions[positionKey];
 
-        uint256 amount0;
-        uint256 amount1;
-
         uint128 liquidityToRemove = uint128(uint256(-params.liquidityDelta));
-        if (position.owner == address(0)) revert OntraNoPosition();
-        if (position.isInRange) {
-            // Remove liquidity from pool
-            (BalanceDelta delta,) = poolManager.modifyLiquidity(
-                params.key,
-                ModifyLiquidityParams({
-                    tickLower: params.tickLower,
-                    tickUpper: params.tickUpper,
-                    liquidityDelta: params.liquidityDelta,
-                    salt: bytes32(uint256(uint160(params.sender)))
-                }),
-                ""
-            );
 
-            amount0 = uint256(uint128(delta.amount0()));
-            amount1 = uint256(uint128(delta.amount1()));
+        // Remove liquidity from pool
+        (BalanceDelta delta,) = poolManager.modifyLiquidity(
+            params.key,
+            ModifyLiquidityParams({
+                tickLower: params.tickLower,
+                tickUpper: params.tickUpper,
+                liquidityDelta: params.liquidityDelta,
+                salt: bytes32(uint256(uint160(params.sender)))
+            }),
+            ""
+        );
 
-            address recipient = params.isRebalancing ? address(this) : params.sender;
-            _takeCurrency(params.key.currency0, recipient, amount0);
-            _takeCurrency(params.key.currency1, recipient, amount1);
+        uint256 amount0 = uint256(uint128(delta.amount0()));
+        uint256 amount1 = uint256(uint128(delta.amount1()));
 
-            if (position.liquidity < liquidityToRemove) revert OntraNotEnoughLiquidity();
-            position.liquidity -= liquidityToRemove;
-        } else {
-            // Withdraw from Aave - position is out of range
-            uint128 totalVirtualLiquidity = _calculateVirtualLiquidity(
-                position.amount0OnAave, position.amount1OnAave, params.tickLower, params.tickUpper
-            );
+        address recipient = params.isRebalancing ? address(this) : params.sender;
+        _takeCurrency(params.key.currency0, recipient, amount0);
+        _takeCurrency(params.key.currency1, recipient, amount1);
 
-            require(totalVirtualLiquidity > 0, "No liquidity on Aave");
-            require(liquidityToRemove <= totalVirtualLiquidity, "Insufficient liquidity on Aave");
-
-            if (liquidityToRemove >= totalVirtualLiquidity) {
-                amount0 = position.amount0OnAave;
-                amount1 = position.amount1OnAave;
-            } else {
-                amount0 = position.amount0OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
-                amount1 = position.amount1OnAave.mulDivDown(liquidityToRemove, totalVirtualLiquidity);
-            }
-
-            // Withdraw from Aave and distribute profits
-            amount0 = _withdrawAndDistributeProfit(
-                positionKey, params.key, params.key.currency0, amount0, params.sender, true
-            );
-            amount1 = _withdrawAndDistributeProfit(
-                positionKey, params.key, params.key.currency1, amount1, params.sender, false
-            );
-
-            position.amount0OnAave -= amount0;
-            position.amount1OnAave -= amount1;
-        }
+        position.liquidity -= liquidityToRemove;
 
         // If position is fully removed, delete it (but not during rebalancing)
         if (
@@ -426,7 +350,6 @@ contract OntraHook is BaseHook, IOntraHook {
         ) {
             delete _positions[positionKey];
         }
-
         // Only emit remove event if not rebalancing
         if (!params.isRebalancing) {
             emit OntraPositionRemoved(params.sender, positionKey, amount0, amount1);
@@ -508,35 +431,15 @@ contract OntraHook is BaseHook, IOntraHook {
     }
 
     /**
-     * @notice Withdraws from Aave, sends principal to user, and donates profit.
-     * @param positionKey The unique key of the position.
-     * @param key The PoolKey of the pool.
+     * @notice Withdraws from Aave
      * @param currency The currency to withdraw.
      * @param amount The principal amount to withdraw and send to the user.
      * @param recipient The address to send the principal to.
-     * @param isToken0 Whether the currency is token0 (true) or token1 (false).
      */
-    function _withdrawAndDistributeProfit(
-        bytes32 positionKey,
-        PoolKey memory key,
-        Currency currency,
-        uint256 amount,
-        address recipient,
-        bool isToken0
-    ) internal returns (uint256 amount_) {
-        if (amount == 0) return 0;
-
+    function _withdrawFromAave(Currency currency, uint256 amount, address recipient) internal {
+        if (amount == 0) return;
         uint256 withdrawn = _aaveWithdraw(currency, amount);
-        IERC20(Currency.unwrap(currency)).transfer(recipient, amount);
-
-        if (withdrawn > amount) {
-            uint256 profit = withdrawn - amount;
-            currency.settle(poolManager, address(this), profit, false);
-            poolManager.donate(key, isToken0 ? profit : 0, isToken0 ? 0 : profit, "");
-            emit OntraAaveProfitsDistributed(positionKey, isToken0 ? profit : 0, isToken0 ? 0 : profit);
-        }
-
-        amount_ = amount;
+        IERC20(Currency.unwrap(currency)).safeTransfer(recipient, withdrawn);
     }
 
     /**
@@ -547,7 +450,7 @@ contract OntraHook is BaseHook, IOntraHook {
      */
     function _transferAndDepositToAave(Currency currency, address from, uint256 amount) internal {
         if (amount > 0) {
-            IERC20(Currency.unwrap(currency)).transferFrom(from, address(this), amount);
+            IERC20(Currency.unwrap(currency)).safeTransferFrom(from, address(this), amount);
             _aaveDeposit(currency, amount);
         }
     }

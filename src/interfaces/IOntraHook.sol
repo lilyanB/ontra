@@ -17,8 +17,6 @@ interface IOntraHook {
      * @param amount1 The amount of token1 involved in the operation.
      * @param isAdd A boolean indicating if liquidity is being added (true) or removed (false).
      * @param isRebalancing A boolean indicating if the callback is triggered during a rebalance operation.
-     * @param profit0 The profit amount for token0 (used during rebalancing from Aave).
-     * @param profit1 The profit amount for token1 (used during rebalancing from Aave).
      */
     struct CallbackData {
         address sender;
@@ -30,8 +28,6 @@ interface IOntraHook {
         uint256 amount1;
         bool isAdd;
         bool isRebalancing;
-        uint256 profit0;
-        uint256 profit1;
     }
 
     /**
@@ -64,10 +60,19 @@ interface IOntraHook {
      * @notice Emitted when a position is added.
      * @param owner Owner of the position.
      * @param positionKey Unique key of the position.
-     * @param isInRange Whether the position is in range.
+     * @param isInPool Whether the position is added to the pool (true) or Aave (false).
      * @param liquidity Amount of liquidity added.
+     * @param amount0 Amount of token0 added.
+     * @param amount1 Amount of token1 added.
      */
-    event OntraPositionAdded(address indexed owner, bytes32 indexed positionKey, bool isInRange, uint128 liquidity);
+    event OntraPositionAdded(
+        address indexed owner,
+        bytes32 indexed positionKey,
+        bool isInPool,
+        uint128 liquidity,
+        uint256 amount0,
+        uint256 amount1
+    );
 
     /**
      * @notice Emitted when a position is removed.
@@ -96,14 +101,6 @@ interface IOntraHook {
      */
     event OntraPositionRebalancedToPool(address indexed owner, bytes32 indexed positionKey, uint128 liquidity);
 
-    /**
-     * @notice Emitted when Aave profits are distributed to the pool.
-     * @param positionKey Unique key of the position.
-     * @param profit0 Amount of token0 profit donated to the pool.
-     * @param profit1 Amount of token1 profit donated to the pool.
-     */
-    event OntraAaveProfitsDistributed(bytes32 indexed positionKey, uint256 profit0, uint256 profit1);
-
     /* -------------------------------------------------------------------------- */
     /*                                   Errors                                   */
     /* -------------------------------------------------------------------------- */
@@ -125,6 +122,12 @@ interface IOntraHook {
 
     /// @notice Position is already in the pool.
     error OntraPositionAlreadyInPool();
+
+    /// @notice Position is not in Aave.
+    error OntraPositionNotInAave();
+
+    /// @notice Not enough tokens deposited on Aave.
+    error OntraNotEnoughOnAave();
 
     /* -------------------------------------------------------------------------- */
     /*                                  Functions                                 */
@@ -170,7 +173,7 @@ interface IOntraHook {
     ) external returns (uint128 liquidity_);
 
     /**
-     * @notice Remove liquidity through the hook - tokens are withdrawn from Aave.
+     * @notice Remove liquidity through the hook - tokens are withdrawn from the pool.
      * @param key PoolKey of the pool.
      * @param tickLower Lower tick of the position.
      * @param tickUpper Upper tick of the position.
@@ -181,6 +184,24 @@ interface IOntraHook {
     function removeLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint128 liquidityToRemove)
         external
         returns (uint256 amount0_, uint256 amount1_);
+
+    /**
+     * @notice Remove tokens from Aave for a position that is out of range.
+     * @param key PoolKey of the pool.
+     * @param tickLower Lower tick of the position.
+     * @param tickUpper Upper tick of the position.
+     * @param amount0ToRemove Amount of token0 to remove.
+     * @param amount1ToRemove Amount of token1 to remove.
+     * @return amount0_ Amount of token0 withdrawn.
+     * @return amount1_ Amount of token1 withdrawn.
+     */
+    function removeTokensFromAave(
+        PoolKey calldata key,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amount0ToRemove,
+        uint256 amount1ToRemove
+    ) external returns (uint256 amount0_, uint256 amount1_);
 
     /**
      * @notice Unlock callback to handle add/remove liquidity.
@@ -199,14 +220,4 @@ interface IOntraHook {
      * @param tickUpper Upper tick of the position.
      */
     function rebalanceToAave(address owner, PoolKey calldata key, int24 tickLower, int24 tickUpper) external;
-
-    /**
-     * @notice Rebalance a position from Aave to the pool when back in range.
-     * @dev Can be called by anyone to move a position back to the pool.
-     * @param owner Owner of the position.
-     * @param key PoolKey of the pool.
-     * @param tickLower Lower tick of the position.
-     * @param tickUpper Upper tick of the position.
-     */
-    function rebalanceToPool(address owner, PoolKey calldata key, int24 tickLower, int24 tickUpper) external;
 }

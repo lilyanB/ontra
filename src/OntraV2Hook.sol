@@ -14,6 +14,7 @@ import {IPool} from "aave-v3/contracts/interfaces/IPool.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
 
 import {IOntraV2Hook} from "./interfaces/IOntraV2Hook.sol";
 
@@ -448,7 +449,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
             SwapParams({
                 zeroForOne: params.zeroForOne,
                 amountSpecified: params.amountSpecified,
-                sqrtPriceLimitX96: params.zeroForOne ? 4295128740 : 1461446703485210103287273052203988822378723970341
+                sqrtPriceLimitX96: params.zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
             }),
             ""
         );
@@ -466,24 +467,18 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
     }
 
     function _calculateTriggerTickLong(int24 highestTick, TrailingStopTier tier) internal pure returns (int24) {
-        uint256 basisPoints = _getTierBasisPoints(tier);
-
-        // Approximate: 1% ≈ 100 ticks (depends on tick spacing)
-        int24 tickDelta = int24(int256(basisPoints / 10));
-
-        return highestTick - tickDelta;
+        // In Uniswap V4: Price = 1.0001^tick, so 1 tick ≈ 0.01% (1 basis point)
+        // Therefore: 5% = 500 basis points ≈ 500 ticks
+        return highestTick - _getTierBasisPoints(tier);
     }
 
     function _calculateTriggerTickShort(int24 lowestTick, TrailingStopTier tier) internal pure returns (int24) {
-        uint256 basisPoints = _getTierBasisPoints(tier);
-
+        // In Uniswap V4: Price = 1.0001^tick, so 1 tick ≈ 0.01% (1 basis point)
         // For shorts, trigger is above the lowest tick
-        int24 tickDelta = int24(int256(basisPoints / 10));
-
-        return lowestTick + tickDelta;
+        return lowestTick + _getTierBasisPoints(tier);
     }
 
-    function _getTierBasisPoints(TrailingStopTier tier) internal pure returns (uint256) {
+    function _getTierBasisPoints(TrailingStopTier tier) internal pure returns (int24) {
         if (tier == TrailingStopTier.FIVE_PERCENT) return 500;
         if (tier == TrailingStopTier.TEN_PERCENT) return 1000;
         if (tier == TrailingStopTier.FIFTEEN_PERCENT) return 1500;

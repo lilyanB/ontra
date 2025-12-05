@@ -34,13 +34,13 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
      */
     function test_longTrailingStop_triggerWithDownwardSwap_fivePercent() public {
         // Add liquidity first so the pool has depth for swaps
-        // Much larger liquidity to prevent extreme price movements
+        // Use concentrated liquidity around current price to allow controlled price movements
         modifyLiquidityRouter.modifyLiquidity(
             key,
             ModifyLiquidityParams({
-                tickLower: -600, // Wider range
-                tickUpper: 600,
-                liquidityDelta: int256(10000 ether),
+                tickLower: -1200, // Very wide range to handle large swaps
+                tickUpper: 1200,
+                liquidityDelta: int256(5000 ether), // Increased liquidity
                 salt: bytes32(0)
             }),
             ZERO_BYTES
@@ -69,9 +69,9 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
         assertTrue(triggerTick <= tickBefore, "Trigger tick should be at or below current tick");
 
         // Execute a downward swap (sell token0, price drops) large enough to cross trigger
-        // With the liquidity we added, need significant amount to move price
-        // Larger amount to cross the -50 tick trigger
-        swap(key, true, -100 ether, ZERO_BYTES);
+        // Need to move price down by ~500 ticks (5%) from current tick
+        // With more liquidity across wider range, can handle larger swaps
+        swap(key, true, -300 ether, ZERO_BYTES);
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());

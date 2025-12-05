@@ -245,7 +245,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         uint256 longEpoch = currentEpoch[key.toId()][tier][true];
         TrailingStopPool storage longPool = _trailingPools[key.toId()][tier][longEpoch];
         if (longPool.executedToken1 == 0 && longPool.totalSharesLong > 0 && currentTick <= longPool.triggerTickLong) {
-            _executePoolTrailingStopLong(key, tier, longEpoch, currentTick);
+            _executePoolTrailingStopLong(key, tier, longEpoch, currentTick, true);
         }
 
         // Check and execute shorts
@@ -254,7 +254,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         if (
             shortPool.executedToken0 == 0 && shortPool.totalSharesShort > 0 && currentTick >= shortPool.triggerTickShort
         ) {
-            _executePoolTrailingStopShort(key, tier, shortEpoch, currentTick);
+            _executePoolTrailingStopShort(key, tier, shortEpoch, currentTick, true);
         }
     }
 
@@ -341,7 +341,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
 
             // Price dropped below trigger -> execute
             if (currentTick <= pool.triggerTickLong) {
-                _executePoolTrailingStopLong(key, tier, epoch, currentTick);
+                _executePoolTrailingStopLong(key, tier, epoch, currentTick, false);
             }
         }
     }
@@ -356,7 +356,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
 
             // Price went above trigger -> execute
             if (currentTick >= pool.triggerTickShort) {
-                _executePoolTrailingStopShort(key, tier, epoch, currentTick);
+                _executePoolTrailingStopShort(key, tier, epoch, currentTick, false);
             }
         }
     }
@@ -365,7 +365,8 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         PoolKey calldata key,
         TrailingStopTier tier,
         uint256 epoch,
-        int24 executionTick
+        int24 executionTick,
+        bool withUnlock
     ) internal {
         TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
@@ -376,8 +377,8 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         // Withdraw all token0 from Aave
         uint256 withdrawn0 = _aaveWithdraw(key.currency0, amount0);
 
-        // Execute swap: token0 -> token1
-        uint256 amount1Received = _executeSwap(key, true, int256(withdrawn0));
+        // Execute swap: token0 -> token1 (exactInput)
+        uint256 amount1Received = _executeSwap(key, true, -int256(withdrawn0), withUnlock);
 
         // Deposit token1 back to Aave for users to claim
         _aaveDeposit(key.currency1, amount1Received);
@@ -396,7 +397,8 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         PoolKey calldata key,
         TrailingStopTier tier,
         uint256 epoch,
-        int24 executionTick
+        int24 executionTick,
+        bool withUnlock
     ) internal {
         TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
@@ -407,8 +409,8 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         // Withdraw all token1 from Aave
         uint256 withdrawn1 = _aaveWithdraw(key.currency1, amount1);
 
-        // Execute swap: token1 -> token0
-        uint256 amount0Received = _executeSwap(key, false, int256(withdrawn1));
+        // Execute swap: token1 -> token0 (exactInput)
+        uint256 amount0Received = _executeSwap(key, false, -int256(withdrawn1), withUnlock);
 
         // Deposit token0 back to Aave for users to claim
         _aaveDeposit(key.currency0, amount0Received);
@@ -423,15 +425,21 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         emit TrailingStopExecutedShort(key.toId(), tier, epoch, withdrawn1, amount0Received, executionTick);
     }
 
-    function _executeSwap(PoolKey calldata key, bool zeroForOne, int256 amountSpecified)
+    function _executeSwap(PoolKey calldata key, bool zeroForOne, int256 amountSpecified, bool withUnlock)
         internal
         returns (uint256 amountOut)
     {
-        bytes memory result = poolManager.unlock(
-            abi.encode(SwapCallbackData({key: key, zeroForOne: zeroForOne, amountSpecified: amountSpecified}))
-        );
+        bytes memory result;
+        if (withUnlock) {
+            result = poolManager.unlock(
+                abi.encode(SwapCallbackData({key: key, zeroForOne: zeroForOne, amountSpecified: amountSpecified}))
+            );
+        } else {
+            result = _handleSwap(SwapCallbackData({key: key, zeroForOne: zeroForOne, amountSpecified: amountSpecified}));
+        }
 
         amountOut = abi.decode(result, (uint256));
+        return amountOut;
     }
 
     function _handleSwap(SwapCallbackData memory params) internal returns (bytes memory) {

@@ -336,7 +336,8 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
         uint256 epochBefore = hookV2.getCurrentEpoch(key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, false);
 
         // Create short trailing stop position
-        uint256 shares = hookV2.createTrailingStop(key, depositAmount, false, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT);
+        uint256 shares =
+            hookV2.createTrailingStop(key, depositAmount, false, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT);
         assertEq(shares, depositAmount, "Shares should equal deposit amount");
 
         // Verify position was created

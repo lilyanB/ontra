@@ -79,9 +79,6 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
         // Verify price dropped significantly
         assertLt(tickAfter, triggerTick, "Price should have dropped below trigger");
 
-        // // Manually execute trailing stop (no longer automatic)
-        // hookV2.executeTrailingStops(key, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT);
-
         // Verify the trailing stop was executed
         IOntraV2Hook.TrailingStopPool memory poolAfter =
             hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, epochBefore);
@@ -110,6 +107,205 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
             ),
             0,
             "User shares should be zero"
+        );
+    }
+
+    /**
+     * @notice Test creating a long trailing stop (token0 -> token1) with 10% tier,
+     *         then executing a large downward swap to trigger it
+     */
+    function test_longTrailingStop_triggerWithDownwardSwap_tenPercent() public {
+        // Add liquidity first so the pool has depth for swaps
+        // Need more liquidity to handle 10% price movement
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: -1980, // Aligned with tickSpacing of 60 (1980 = 33 * 60)
+                tickUpper: 1980,
+                liquidityDelta: int256(10000 ether), // Increased liquidity
+                salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
+
+        uint256 depositAmount = 10 ether;
+
+        // Get initial state
+        (, int24 tickBefore,,) = manager.getSlot0(key.toId());
+        uint256 epochBefore = hookV2.getCurrentEpoch(key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, true);
+
+        // Create long trailing stop position with 10% tier
+        uint256 shares = hookV2.createTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.TEN_PERCENT);
+        assertEq(shares, depositAmount, "Shares should equal deposit amount");
+
+        // Verify position was created
+        IOntraV2Hook.TrailingStopPool memory poolBefore =
+            hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, epochBefore);
+        assertEq(poolBefore.totalToken0Long, depositAmount, "Pool should have token0");
+        assertEq(poolBefore.executedToken1, 0, "Pool should not be executed yet");
+        assertTrue(poolBefore.highestTickEver != type(int24).min, "Highest tick should be set");
+
+        // Store initial trigger tick (should be ~1000 ticks below current for 10%)
+        int24 triggerTick = poolBefore.triggerTickLong;
+        assertTrue(triggerTick <= tickBefore, "Trigger tick should be at or below current tick");
+        assertEq(triggerTick, tickBefore - 1000, "Trigger should be 1000 ticks below (10%)");
+
+        // Execute a downward swap large enough to cross the 10% trigger
+        // Need to move price down by ~1000 ticks (10%)
+        // With increased liquidity, can handle larger swaps
+        swap(key, true, -800 ether, ZERO_BYTES);
+
+        // Get tick after swap
+        (, int24 tickAfter,,) = manager.getSlot0(key.toId());
+
+        // Verify price dropped below trigger
+        assertLt(tickAfter, triggerTick, "Price should have dropped below 10% trigger");
+
+        // Verify the trailing stop was executed
+        IOntraV2Hook.TrailingStopPool memory poolAfter =
+            hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, epochBefore);
+        assertEq(poolAfter.totalToken0Long, 0, "Pool token0 should be zero after execution");
+        assertGt(poolAfter.executedToken1, 0, "Pool should have received token1");
+
+        // Verify epoch was incremented
+        assertEq(
+            hookV2.getCurrentEpoch(key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, true),
+            epochBefore + 1,
+            "Epoch should be incremented"
+        );
+
+        // Verify user can withdraw token1
+        uint256 token1Before = token1.balanceOf(address(this));
+        uint256 amountWithdrawn =
+            hookV2.withdrawTrailingStop(key, shares, true, IOntraV2Hook.TrailingStopTier.TEN_PERCENT, epochBefore);
+
+        assertGt(amountWithdrawn, 0, "Should withdraw token1");
+        assertEq(token1.balanceOf(address(this)) - token1Before, amountWithdrawn, "Should receive token1");
+
+        // User shares should be cleared
+        assertEq(
+            hookV2.getUserShares(
+                address(this), key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, true, epochBefore
+            ),
+            0,
+            "User shares should be zero"
+        );
+    }
+
+    /**
+     * @notice Test creating multiple trailing stops (5%, 10%, 15%) and triggering all of them
+     *         with a single large downward swap
+     */
+    function test_multipleTrailingStops_triggerAll() public {
+        // Add liquidity with very wide range to handle 15% price movement
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: -2940, // Aligned with tickSpacing of 60 (2940 = 49 * 60)
+                tickUpper: 2940,
+                liquidityDelta: int256(15000 ether), // Large liquidity for 15% move
+                salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
+
+        uint256 depositAmount = 10 ether;
+
+        // Get initial tick
+        (, int24 tickBefore,,) = manager.getSlot0(key.toId());
+
+        // Create trailing stop positions for all three tiers
+        hookV2.createTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT);
+        hookV2.createTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.TEN_PERCENT);
+        hookV2.createTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.FIFTEEN_PERCENT);
+
+        // Verify all positions were created
+        IOntraV2Hook.TrailingStopPool memory pool5 =
+            hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, 0);
+        IOntraV2Hook.TrailingStopPool memory pool10 =
+            hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, 0);
+        IOntraV2Hook.TrailingStopPool memory pool15 =
+            hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.FIFTEEN_PERCENT, 0);
+
+        assertEq(pool5.totalToken0Long, depositAmount, "Pool 5% should have token0");
+        assertEq(pool10.totalToken0Long, depositAmount, "Pool 10% should have token0");
+        assertEq(pool15.totalToken0Long, depositAmount, "Pool 15% should have token0");
+
+        // Verify trigger ticks
+        assertEq(pool5.triggerTickLong, tickBefore - 500, "5% trigger should be 500 ticks below");
+        assertEq(pool10.triggerTickLong, tickBefore - 1000, "10% trigger should be 1000 ticks below");
+        assertEq(pool15.triggerTickLong, tickBefore - 1500, "15% trigger should be 1500 ticks below");
+
+        // Execute a very large downward swap to trigger all three stops
+        swap(key, true, -1200 ether, ZERO_BYTES);
+
+        // Get tick after swap
+        (, int24 tickAfter,,) = manager.getSlot0(key.toId());
+
+        // Verify price dropped below all triggers
+        assertLt(tickAfter, pool5.triggerTickLong, "Price should be below 5% trigger");
+        assertLt(tickAfter, pool10.triggerTickLong, "Price should be below 10% trigger");
+        assertLt(tickAfter, pool15.triggerTickLong, "Price should be below 15% trigger");
+
+        // Verify all three trailing stops were executed
+        pool5 = hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, 0);
+        pool10 = hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, 0);
+        pool15 = hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.FIFTEEN_PERCENT, 0);
+
+        assertEq(pool5.totalToken0Long, 0, "Pool 5% token0 should be zero");
+        assertEq(pool10.totalToken0Long, 0, "Pool 10% token0 should be zero");
+        assertEq(pool15.totalToken0Long, 0, "Pool 15% token0 should be zero");
+
+        assertGt(pool5.executedToken1, 0, "Pool 5% should have received token1");
+        assertGt(pool10.executedToken1, 0, "Pool 10% should have received token1");
+        assertGt(pool15.executedToken1, 0, "Pool 15% should have received token1");
+
+        // Verify all epochs were incremented
+        assertEq(hookV2.getCurrentEpoch(key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, true), 1, "Epoch 5%");
+        assertEq(hookV2.getCurrentEpoch(key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, true), 1, "Epoch 10%");
+        assertEq(
+            hookV2.getCurrentEpoch(key.toId(), IOntraV2Hook.TrailingStopTier.FIFTEEN_PERCENT, true), 1, "Epoch 15%"
+        );
+
+        // Withdraw swapped token1 from all three tiers
+        uint256 token1BalanceBefore = token1.balanceOf(address(this));
+
+        hookV2.withdrawTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, 0);
+        uint256 withdrawn5 = token1.balanceOf(address(this)) - token1BalanceBefore;
+
+        hookV2.withdrawTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.TEN_PERCENT, 0);
+        uint256 withdrawn10 = token1.balanceOf(address(this)) - token1BalanceBefore - withdrawn5;
+
+        hookV2.withdrawTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.FIFTEEN_PERCENT, 0);
+        uint256 totalWithdrawn = token1.balanceOf(address(this)) - token1BalanceBefore;
+
+        // Verify total withdrawn matches sum of executed amounts
+        assertEq(
+            totalWithdrawn,
+            pool5.executedToken1 + pool10.executedToken1 + pool15.executedToken1,
+            "Total withdrawn should match"
+        );
+        assertEq(withdrawn5, pool5.executedToken1, "5% withdrawn should match executed");
+        assertEq(withdrawn10, pool10.executedToken1, "10% withdrawn should match executed");
+        assertEq(
+            totalWithdrawn - withdrawn5 - withdrawn10, pool15.executedToken1, "15% withdrawn should match executed"
+        );
+
+        // Verify shares are cleared
+        assertEq(
+            hookV2.getUserShares(address(this), key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, true, 0),
+            0,
+            "Shares 5% should be zero"
+        );
+        assertEq(
+            hookV2.getUserShares(address(this), key.toId(), IOntraV2Hook.TrailingStopTier.TEN_PERCENT, true, 0),
+            0,
+            "Shares 10% should be zero"
+        );
+        assertEq(
+            hookV2.getUserShares(address(this), key.toId(), IOntraV2Hook.TrailingStopTier.FIFTEEN_PERCENT, true, 0),
+            0,
+            "Shares 15% should be zero"
         );
     }
 }

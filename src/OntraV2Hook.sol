@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {CurrencySettler} from "@uniswap/v4-core/test/utils/CurrencySettler.sol";
@@ -15,6 +16,8 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {Locker} from "v4-periphery/src/libraries/Locker.sol";
+import {IMsgSender} from "v4-periphery/src/interfaces/IMsgSender.sol";
 
 import {IOntraV2Hook} from "./interfaces/IOntraV2Hook.sol";
 
@@ -23,7 +26,7 @@ import {IOntraV2Hook} from "./interfaces/IOntraV2Hook.sol";
  * @notice Trailing Stop Order Hook for Uniswap V4 with Aave integration
  * @dev Implements 3 tiers of trailing stops (5%, 10%, 15%) with pooled execution
  */
-contract OntraV2Hook is BaseHook, IOntraV2Hook {
+contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     using StateLibrary for IPoolManager;
     using SafeERC20 for IERC20;
     using CurrencySettler for Currency;
@@ -34,6 +37,9 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
     /* -------------------------------------------------------------------------- */
 
     IPool public immutable override AAVE_POOL;
+
+    // Mapping of verified routers that can be trusted to return the original msg.sender
+    mapping(address swapRouter => bool approved) public verifiedRouters;
 
     mapping(PoolId poolId => int24 lastTick) public lastTicks;
 
@@ -82,8 +88,21 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
     /*                                Constructor                                 */
     /* -------------------------------------------------------------------------- */
 
-    constructor(IPoolManager manager, IPool aavePool) BaseHook(manager) {
-        AAVE_POOL = aavePool;
+    /**
+     * @param manager The pool manager address
+     * @param aavePool The Aave pool address
+     */
+    constructor(IPoolManager manager, address aavePool) BaseHook(manager) Ownable(msg.sender) {
+        AAVE_POOL = IPool(aavePool);
+    }
+
+    /* -------------------------------------------------------------------------- */
+    /*                          Trusted Router Management                         */
+    /* -------------------------------------------------------------------------- */
+
+    /// @inheritdoc IOntraV2Hook
+    function setRouter(address router, bool approved) external onlyOwner {
+        verifiedRouters[router] = approved;
     }
 
     /* -------------------------------------------------------------------------- */
@@ -145,6 +164,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
 
             pool.totalToken0Long += amount;
             pool.totalSharesLong += shares;
+            pool.aaveDepositedToken0Long += amount;
 
             // Initialize or update highest tick
             if (pool.highestTickEver == 0 || currentTick > pool.highestTickEver) {
@@ -161,6 +181,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
 
             pool.totalToken1Short += amount;
             pool.totalSharesShort += shares;
+            pool.aaveDepositedToken1Short += amount;
 
             // Initialize or update lowest tick
             if (pool.lowestTickEver == type(int24).max || currentTick < pool.lowestTickEver) {
@@ -209,6 +230,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
                 // Update pool state
                 pool.totalToken0Long -= amountWithdrawn;
                 pool.totalSharesLong -= shares;
+                pool.aaveDepositedToken0Long -= amountWithdrawn;
             }
         } else {
             // Check if pool has been executed (executedToken0 > 0 means executed)
@@ -227,6 +249,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
                 // Update pool state
                 pool.totalToken1Short -= amountWithdrawn;
                 pool.totalSharesShort -= shares;
+                pool.aaveDepositedToken1Short -= amountWithdrawn;
             }
         }
 
@@ -246,7 +269,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         uint256 longEpoch = currentEpoch[key.toId()][tier][true];
         TrailingStopPool storage longPool = _trailingPools[key.toId()][tier][longEpoch];
         if (longPool.executedToken1 == 0 && longPool.totalSharesLong > 0 && currentTick <= longPool.triggerTickLong) {
-            _executePoolTrailingStopLong(key, tier, longEpoch, currentTick, true);
+            _executePoolTrailingStopLong(key, tier, longEpoch, currentTick, true, msg.sender);
         }
 
         // Check and execute shorts
@@ -255,7 +278,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         if (
             shortPool.executedToken0 == 0 && shortPool.totalSharesShort > 0 && currentTick >= shortPool.triggerTickShort
         ) {
-            _executePoolTrailingStopShort(key, tier, shortEpoch, currentTick, true);
+            _executePoolTrailingStopShort(key, tier, shortEpoch, currentTick, true, msg.sender);
         }
     }
 
@@ -268,7 +291,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         return this.afterInitialize.selector;
     }
 
-    function _afterSwap(address, PoolKey calldata key, SwapParams calldata, BalanceDelta, bytes calldata)
+    function _afterSwap(address sender, PoolKey calldata key, SwapParams calldata, BalanceDelta, bytes calldata)
         internal
         override
         returns (bytes4, int128)
@@ -277,16 +300,32 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         int24 previousTick = lastTicks[key.toId()];
         lastTicks[key.toId()] = currentTick;
 
+        // Get the real msg.sender from trusted router
+        address actualSender = address(0);
+
+        // Try to get the actual sender from the router if it implements IMsgSender
+        if (verifiedRouters[sender]) {
+            try IMsgSender(sender).msgSender() returns (address swapper) {
+                actualSender = swapper;
+            } catch {
+                // Router doesn't implement msgSender(), skip execution
+                return (this.afterSwap.selector, 0);
+            }
+        } else {
+            // Router doesn't implement msgSender(), skip execution
+            return (this.afterSwap.selector, 0);
+        }
+
         // Price went up -> update longs and check shorts
         if (currentTick > previousTick) {
             _updateLongTrailingStops(key, currentTick);
-            _checkAndExecuteShortTrailingStops(key, currentTick);
+            _checkAndExecuteShortTrailingStops(key, currentTick, actualSender);
         }
 
         // Price went down -> update shorts and check longs
         if (currentTick < previousTick) {
             _updateShortTrailingStops(key, currentTick);
-            _checkAndExecuteLongTrailingStops(key, currentTick);
+            _checkAndExecuteLongTrailingStops(key, currentTick, actualSender);
         }
 
         return (this.afterSwap.selector, 0);
@@ -332,7 +371,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         }
     }
 
-    function _checkAndExecuteLongTrailingStops(PoolKey calldata key, int24 currentTick) internal {
+    function _checkAndExecuteLongTrailingStops(PoolKey calldata key, int24 currentTick, address sender) internal {
         for (uint256 i = 0; i < 3; i++) {
             TrailingStopTier tier = TrailingStopTier(i);
             uint256 epoch = currentEpoch[key.toId()][tier][true];
@@ -342,12 +381,12 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
 
             // Price dropped below trigger -> execute
             if (currentTick <= pool.triggerTickLong) {
-                _executePoolTrailingStopLong(key, tier, epoch, currentTick, false);
+                _executePoolTrailingStopLong(key, tier, epoch, currentTick, false, sender);
             }
         }
     }
 
-    function _checkAndExecuteShortTrailingStops(PoolKey calldata key, int24 currentTick) internal {
+    function _checkAndExecuteShortTrailingStops(PoolKey calldata key, int24 currentTick, address sender) internal {
         for (uint256 i = 0; i < 3; i++) {
             TrailingStopTier tier = TrailingStopTier(i);
             uint256 epoch = currentEpoch[key.toId()][tier][false];
@@ -357,7 +396,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
 
             // Price went above trigger -> execute
             if (currentTick >= pool.triggerTickShort) {
-                _executePoolTrailingStopShort(key, tier, epoch, currentTick, false);
+                _executePoolTrailingStopShort(key, tier, epoch, currentTick, false, sender);
             }
         }
     }
@@ -367,19 +406,26 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         TrailingStopTier tier,
         uint256 epoch,
         int24 executionTick,
-        bool withUnlock
+        bool withUnlock,
+        address executor
     ) internal {
         TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
         if (pool.totalToken0Long == 0) return;
 
-        uint256 amount0 = pool.totalToken0Long;
+        // Withdraw all token0 from Aave (principal + yield)
+        uint256 withdrawn0 = _aaveWithdraw(key.currency0, pool.totalToken0Long);
 
-        // Withdraw all token0 from Aave
-        uint256 withdrawn0 = _aaveWithdraw(key.currency0, amount0);
+        // Calculate yield: withdrawn amount - initial deposit
+        uint256 yieldAmount = withdrawn0 > pool.aaveDepositedToken0Long ? withdrawn0 - pool.aaveDepositedToken0Long : 0;
 
-        // Execute swap: token0 -> token1 (exactInput)
-        uint256 amount1Received = _executeSwap(key, true, -int256(withdrawn0), withUnlock);
+        // Swap only the principal (without yield)
+        uint256 amount1Received = _executeSwap(key, true, -int256(withdrawn0 - yieldAmount), withUnlock);
+
+        // Send yield to executor AFTER the swap (outside unlock context)
+        if (yieldAmount > 0 && executor != address(0)) {
+            IERC20(Currency.unwrap(key.currency0)).safeTransfer(executor, yieldAmount);
+        }
 
         // Deposit token1 back to Aave for users to claim
         _aaveDeposit(key.currency1, amount1Received);
@@ -391,7 +437,9 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         // Increment epoch for new deposits
         currentEpoch[key.toId()][tier][true]++;
 
-        emit TrailingStopExecutedLong(key.toId(), tier, epoch, withdrawn0, amount1Received, executionTick);
+        emit TrailingStopExecutedLong(
+            key.toId(), tier, epoch, withdrawn0 - yieldAmount, amount1Received, executionTick, yieldAmount, executor
+        );
     }
 
     function _executePoolTrailingStopShort(
@@ -399,19 +447,27 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         TrailingStopTier tier,
         uint256 epoch,
         int24 executionTick,
-        bool withUnlock
+        bool withUnlock,
+        address executor
     ) internal {
         TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
         if (pool.totalToken1Short == 0) return;
 
-        uint256 amount1 = pool.totalToken1Short;
+        // Withdraw all token1 from Aave (principal + yield)
+        uint256 withdrawn1 = _aaveWithdraw(key.currency1, pool.totalToken1Short);
 
-        // Withdraw all token1 from Aave
-        uint256 withdrawn1 = _aaveWithdraw(key.currency1, amount1);
+        // Calculate yield: withdrawn amount - initial deposit
+        uint256 yieldAmount =
+            withdrawn1 > pool.aaveDepositedToken1Short ? withdrawn1 - pool.aaveDepositedToken1Short : 0;
 
-        // Execute swap: token1 -> token0 (exactInput)
-        uint256 amount0Received = _executeSwap(key, false, -int256(withdrawn1), withUnlock);
+        // Swap only the principal (without yield)
+        uint256 amount0Received = _executeSwap(key, false, -int256(withdrawn1 - yieldAmount), withUnlock);
+
+        // Send yield to executor AFTER the swap (outside unlock context)
+        if (yieldAmount > 0 && executor != address(0)) {
+            IERC20(Currency.unwrap(key.currency1)).safeTransfer(executor, yieldAmount);
+        }
 
         // Deposit token0 back to Aave for users to claim
         _aaveDeposit(key.currency0, amount0Received);
@@ -423,7 +479,9 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook {
         // Increment epoch for new deposits
         currentEpoch[key.toId()][tier][false]++;
 
-        emit TrailingStopExecutedShort(key.toId(), tier, epoch, withdrawn1, amount0Received, executionTick);
+        emit TrailingStopExecutedShort(
+            key.toId(), tier, epoch, withdrawn1 - yieldAmount, amount0Received, executionTick, yieldAmount, executor
+        );
     }
 
     function _executeSwap(PoolKey calldata key, bool zeroForOne, int256 amountSpecified, bool withUnlock)

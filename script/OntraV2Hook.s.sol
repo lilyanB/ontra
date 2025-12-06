@@ -32,7 +32,7 @@ contract OntraV2HookScript is Script {
             HookMiner.find(CREATE2_DEPLOYER, flags, type(OntraV2Hook).creationCode, constructorArgs);
 
         // Deploy the hook using Create2
-        OntraV2Hook ontraV2Hook = new OntraV2Hook{salt: salt}(IPoolManager(POOL_MANAGER), IPool(aavePool));
+        OntraV2Hook ontraV2Hook = new OntraV2Hook{salt: salt}(IPoolManager(POOL_MANAGER), aavePool);
         require(address(ontraV2Hook) == hookAddress, "OntraV2HookScript: hook address mismatch");
         vm.stopBroadcast();
     }

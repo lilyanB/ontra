@@ -10,9 +10,11 @@ import {PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
-import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
 
 import {OntraV2HookFixture} from "./utils/FixturesV2.sol";
+import {SwapRouterWithLocker} from "./utils/SwapRouterWithLocker.sol";
 import {IOntraV2Hook} from "../../src/interfaces/IOntraV2Hook.sol";
 
 /**
@@ -71,7 +73,12 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
         // Execute a downward swap (sell token0, price drops) large enough to cross trigger
         // Need to move price down by ~500 ticks (5%) from current tick
         // With more liquidity across wider range, can handle larger swaps
-        swap(key, true, -300 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({zeroForOne: true, amountSpecified: -300 ether, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());
@@ -153,7 +160,12 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
         // Execute a downward swap large enough to cross the 10% trigger
         // Need to move price down by ~1000 ticks (10%)
         // With increased liquidity, can handle larger swaps
-        swap(key, true, -800 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({zeroForOne: true, amountSpecified: -800 ether, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());
@@ -237,7 +249,14 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
         assertEq(pool15.triggerTickLong, tickBefore - 1500, "15% trigger should be 1500 ticks below");
 
         // Execute a very large downward swap to trigger all three stops
-        swap(key, true, -1200 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({
+                zeroForOne: true, amountSpecified: -1200 ether, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());
@@ -310,6 +329,74 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
     }
 
     /**
+     * @notice Test that Aave yield generated on a long position is sent to the swapper
+     *         when the trailing stop is triggered automatically by the swap
+     */
+    function test_longTrailingStop_aaveYieldSentToExecutor() public {
+        // Add liquidity first
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: -1200, tickUpper: 1200, liquidityDelta: int256(5000 ether), salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
+
+        uint256 depositAmount = 10 ether;
+
+        // Create long trailing stop position
+        hookV2.createTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT);
+
+        // Simulate Aave yield: add 1 ether of yield to token0
+        uint256 yieldAmount = 1 ether;
+        aavePool.simulateYield(address(token0), yieldAmount);
+
+        // Create a separate account to execute the swap (they will receive the yield)
+        address executor = makeAddr("executor");
+
+        // Give executor tokens to perform the swap and approvals
+        token0.mint(executor, 1000 ether);
+        vm.startPrank(executor);
+        token0.approve(address(swapRouterWithLocker), type(uint256).max);
+        token0.approve(address(manager), type(uint256).max);
+
+        // Execute downward swap as the executor - this will trigger the stop automatically
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({zeroForOne: true, amountSpecified: -300 ether, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
+        vm.stopPrank();
+
+        // Get executor's token0 balance after execution
+        uint256 executorToken0After = token0.balanceOf(executor);
+
+        // Verify the pool was executed
+        IOntraV2Hook.TrailingStopPool memory poolAfter =
+            hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, 0);
+
+        assertEq(poolAfter.totalToken0Long, 0, "Pool token0 should be zero after execution");
+        // The pool swapped 10 ether token0 to token1, calculate exact amount received
+        uint256 expectedToken1 = poolAfter.executedToken1; // Store the actual swapped amount
+        assertEq(poolAfter.executedToken1, expectedToken1, "Pool should have received token1 from swap");
+
+        // Verify executor received the yield (1 ether)
+        // They started with 1000 ether, spent 300 in swap, and received 1 ether yield
+        // So final balance should be 1000 - 300 + 1 = 701 ether
+        assertEq(
+            executorToken0After, 1000 ether - 300 ether + yieldAmount, "Executor should have 701 ether (1000 - 300 + 1)"
+        );
+
+        // User should be able to withdraw their token1 (swapped from principal, not yield)
+        uint256 token1Before = token1.balanceOf(address(this));
+        hookV2.withdrawTrailingStop(key, depositAmount, true, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, 0);
+        uint256 token1Received = token1.balanceOf(address(this)) - token1Before;
+
+        assertEq(token1Received, poolAfter.executedToken1, "User should receive swapped token1");
+    }
+
+    /**
      * @notice Test creating multiple long trailing stops (5%, 10%, 15%) and triggering only
      *         the first two with a ~12% downward price movement, leaving 15% untriggered
      */
@@ -355,7 +442,14 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
 
         // Execute a downward swap large enough to trigger 5% and 10%, but NOT 15%
         // Target: move ~1200 ticks down (12%) to cross 5% and 10% but stay above 15% trigger
-        swap(key, true, -1000 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({
+                zeroForOne: true, amountSpecified: -1000 ether, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());
@@ -482,7 +576,14 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
 
         // Execute an upward swap (sell token1, price rises) large enough to cross trigger
         // Need to move price up by ~500 ticks (5%) from current tick
-        swap(key, false, -300 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({
+                zeroForOne: false, amountSpecified: -300 ether, sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+            }),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());
@@ -559,7 +660,14 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
 
         // Execute an upward swap large enough to cross the 10% trigger
         // Need to move price up by ~1000 ticks (10%)
-        swap(key, false, -800 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({
+                zeroForOne: false, amountSpecified: -800 ether, sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+            }),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());
@@ -640,7 +748,14 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
         int24 trigger15 = pool15.triggerTickShort;
 
         // Execute a very large upward swap to trigger all three stops
-        swap(key, false, -1200 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({
+                zeroForOne: false, amountSpecified: -1200 ether, sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+            }),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());
@@ -713,6 +828,78 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
     }
 
     /**
+     * @notice Test that Aave yield generated on a short position is sent to the swapper
+     *         when the trailing stop is triggered automatically by the swap
+     */
+    function test_shortTrailingStop_aaveYieldSentToExecutor() public {
+        // Add liquidity first
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: -1200, tickUpper: 1200, liquidityDelta: int256(5000 ether), salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
+
+        uint256 depositAmount = 10 ether;
+
+        // Create short trailing stop position
+        hookV2.createTrailingStop(key, depositAmount, false, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT);
+
+        // Simulate Aave yield: add 0.5 ether of yield to token1
+        uint256 yieldAmount = 0.5 ether;
+        aavePool.simulateYield(address(token1), yieldAmount);
+
+        // Create a separate account to execute the swap (they will receive the yield)
+        address executor = makeAddr("executor");
+
+        // Give executor tokens to perform the swap and approvals
+        token1.mint(executor, 1000 ether);
+        vm.startPrank(executor);
+        token1.approve(address(swapRouterWithLocker), type(uint256).max);
+        token1.approve(address(manager), type(uint256).max);
+
+        // Execute upward swap as the executor - this will trigger the stop automatically
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({
+                zeroForOne: false, amountSpecified: -300 ether, sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+            }),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
+        vm.stopPrank();
+
+        // Get executor's token1 balance after execution
+        uint256 executorToken1After = token1.balanceOf(executor);
+
+        // Verify the pool was executed
+        IOntraV2Hook.TrailingStopPool memory poolAfter =
+            hookV2.trailingPools(key.toId(), IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, 0);
+
+        assertEq(poolAfter.totalToken1Short, 0, "Pool token1 should be zero after execution");
+        // The pool swapped 10 ether token1 to token0, calculate exact amount received
+        uint256 expectedToken0 = poolAfter.executedToken0; // Store the actual swapped amount
+        assertEq(poolAfter.executedToken0, expectedToken0, "Pool should have received token0 from swap");
+
+        // Verify executor received the yield (0.5 ether)
+        // They started with 1000 ether, spent 300 in swap, and received 0.5 ether yield
+        // So final balance should be 1000 - 300 + 0.5 = 700.5 ether
+        assertEq(
+            executorToken1After,
+            1000 ether - 300 ether + yieldAmount,
+            "Executor should have 700.5 ether (1000 - 300 + 0.5)"
+        );
+
+        // User should be able to withdraw their token0 (swapped from principal, not yield)
+        uint256 token0Before = token0.balanceOf(address(this));
+        hookV2.withdrawTrailingStop(key, depositAmount, false, IOntraV2Hook.TrailingStopTier.FIVE_PERCENT, 0);
+        uint256 token0Received = token0.balanceOf(address(this)) - token0Before;
+
+        assertEq(token0Received, poolAfter.executedToken0, "User should receive swapped token0");
+    }
+
+    /**
      * @notice Test creating multiple short trailing stops (5%, 10%, 15%) and triggering only
      *         the first two with a ~10% upward price movement, leaving 15% untriggered
      * @dev This test creates positions and makes a controlled price movement to trigger only some tiers
@@ -734,7 +921,12 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
 
         // First, do a downward swap to establish a lowestTickEver below 0
         // This ensures trigger ticks are properly set
-        swap(key, true, -200 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({zeroForOne: true, amountSpecified: -200 ether, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         (, int24 tickAfterDown,,) = manager.getSlot0(key.toId());
 
@@ -767,7 +959,14 @@ contract TestSwapTriggerTrailingStop is OntraV2HookFixture {
 
         // Execute an upward swap large enough to trigger 5% and 10%, but NOT 15%
         // Target: move price to between trigger10 and trigger15
-        swap(key, false, -900 ether, ZERO_BYTES);
+        swapRouterWithLocker.swap(
+            key,
+            SwapParams({
+                zeroForOne: false, amountSpecified: -900 ether, sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+            }),
+            SwapRouterWithLocker.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ZERO_BYTES
+        );
 
         // Get tick after swap
         (, int24 tickAfter,,) = manager.getSlot0(key.toId());

@@ -13,9 +13,9 @@ Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings ins
 - [x] Implement addLiquidity with Aave integration
 - [x] Implement removeLiquidity with Aave integration
 - [x] Implement rebalanceToAave function
+- [x] Implement Trailing Stop Orders
 - [ ] Implement Limit Orders
 - [ ] Implement TWAP Orders
-- [ ] Implement Trailing Stop Orders
 - [ ] Integrate Fhenix FHE for Hidden Orders
 - [ ] Write comprehensive tests
 - [ ] Optimize gas usage
@@ -31,4 +31,6 @@ Outside of scope for the Hookathon:
 
 ## Specifications
 
-- all yield generated from Aave deposits is returned to liquidity providers
+- yield generated from Aave deposits during rehypothecation is returned to liquidity providers
+- trailing stop lost orders are deposited into Aave until triggered and the generated yield is returned to the order placer
+- executed trailing stop lost are also deposited into Aave until withdrawn by the order placer. Generated yield is returned to the owner

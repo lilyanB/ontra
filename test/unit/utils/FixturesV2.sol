@@ -8,6 +8,7 @@ import {Currency} from "v4-core/types/Currency.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 
 import {MockAavePool} from "./MockAavePool.sol";
+import {SwapRouterWithLocker} from "./SwapRouterWithLocker.sol";
 
 import {OntraV2Hook} from "../../../src/OntraV2Hook.sol";
 
@@ -15,6 +16,7 @@ import {OntraV2Hook} from "../../../src/OntraV2Hook.sol";
 contract OntraV2HookFixture is Test, Deployers {
     OntraV2Hook hookV2;
     MockAavePool aavePool;
+    SwapRouterWithLocker swapRouterWithLocker;
 
     MockERC20 token0;
     MockERC20 token1;
@@ -37,11 +39,23 @@ contract OntraV2HookFixture is Test, Deployers {
         deployCodeTo("OntraV2Hook.sol", abi.encode(manager, address(aavePool)), hookAddress);
         hookV2 = OntraV2Hook(hookAddress);
 
+        // Deploy swap router that properly tracks msg.sender
+        swapRouterWithLocker = new SwapRouterWithLocker(manager);
+
+        // Add the router to the verified routers list
+        hookV2.setRouter(address(swapRouterWithLocker), true);
+
         // Approve our hook address to spend these tokens as well
         token0 = MockERC20(Currency.unwrap(currency0));
         token1 = MockERC20(Currency.unwrap(currency1));
         token0.approve(address(hookV2), type(uint256).max);
         token1.approve(address(hookV2), type(uint256).max);
+
+        // Approve swapRouterWithLocker and manager to spend our tokens
+        token0.approve(address(swapRouterWithLocker), type(uint256).max);
+        token1.approve(address(swapRouterWithLocker), type(uint256).max);
+        token0.approve(address(manager), type(uint256).max);
+        token1.approve(address(manager), type(uint256).max);
 
         // Initialize pool
         (key,) = initPool(

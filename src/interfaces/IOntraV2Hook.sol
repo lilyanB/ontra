@@ -33,6 +33,8 @@ interface IOntraV2Hook {
      * @param totalSharesShort Total shares issued for short positions
      * @param executedToken1 Amount of token1 received after long execution
      * @param executedToken0 Amount of token0 received after short execution
+     * @param aaveDepositedToken0Long Initial amount of token0 deposited to Aave for longs
+     * @param aaveDepositedToken1Short Initial amount of token1 deposited to Aave for shorts
      */
     struct TrailingStopPool {
         int24 highestTickEver;
@@ -45,6 +47,8 @@ interface IOntraV2Hook {
         uint256 totalSharesShort;
         uint256 executedToken1;
         uint256 executedToken0;
+        uint256 aaveDepositedToken0Long;
+        uint256 aaveDepositedToken1Short;
     }
 
     /**
@@ -90,6 +94,8 @@ interface IOntraV2Hook {
      * @param amount0In Amount of token0 swapped
      * @param amount1Out Amount of token1 received
      * @param executionTick The tick at execution
+     * @param yieldToExecutor Yield sent to the executor
+     * @param executor Address of the executor
      */
     event TrailingStopExecutedLong(
         PoolId indexed poolId,
@@ -97,7 +103,9 @@ interface IOntraV2Hook {
         uint256 epoch,
         uint256 amount0In,
         uint256 amount1Out,
-        int24 executionTick
+        int24 executionTick,
+        uint256 yieldToExecutor,
+        address indexed executor
     );
 
     /**
@@ -108,6 +116,8 @@ interface IOntraV2Hook {
      * @param amount1In Amount of token1 swapped
      * @param amount0Out Amount of token0 received
      * @param executionTick The tick at execution
+     * @param yieldToExecutor Yield sent to the executor
+     * @param executor Address of the executor
      */
     event TrailingStopExecutedShort(
         PoolId indexed poolId,
@@ -115,7 +125,9 @@ interface IOntraV2Hook {
         uint256 epoch,
         uint256 amount1In,
         uint256 amount0Out,
-        int24 executionTick
+        int24 executionTick,
+        uint256 yieldToExecutor,
+        address indexed executor
     );
 
     /**
@@ -150,6 +162,13 @@ interface IOntraV2Hook {
     /* -------------------------------------------------------------------------- */
     /*                              Public Functions                              */
     /* -------------------------------------------------------------------------- */
+
+    /**
+     * @notice Set the verification status of a router
+     * @param router Address of the router to set
+     * @param approved True to add the router to trusted list, false to remove it
+     */
+    function setRouter(address router, bool approved) external;
 
     /**
      * @notice Adds to a trailing stop pool and receives shares

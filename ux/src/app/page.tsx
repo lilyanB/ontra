@@ -5,9 +5,9 @@ import { useAccount, useBalance } from "wagmi";
 import { formatUnits } from "viem";
 
 const TOKENS = {
-  ETH: {
-    symbol: "ETH",
-    address: null,
+  WETH: {
+    symbol: "WETH",
+    address: "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9" as `0x${string}`,
     decimals: 18,
     icon: "🔵",
   },
@@ -21,13 +21,14 @@ const TOKENS = {
 
 function Page() {
   const { address, isConnected } = useAccount();
-  const [fromToken, setFromToken] = useState<"ETH" | "USDC">("ETH");
-  const [toToken, setToToken] = useState<"ETH" | "USDC">("USDC");
+  const [fromToken, setFromToken] = useState<"WETH" | "USDC">("WETH");
+  const [toToken, setToToken] = useState<"WETH" | "USDC">("USDC");
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
 
-  const { data: ethBalance } = useBalance({
+  const { data: wethBalance } = useBalance({
     address: address,
+    token: TOKENS.WETH.address,
   });
 
   const { data: usdcBalance } = useBalance({
@@ -35,13 +36,13 @@ function Page() {
     token: TOKENS.USDC.address,
   });
 
-  const getBalance = (tokenSymbol: "ETH" | "USDC") => {
+  const getBalance = (tokenSymbol: "WETH" | "USDC") => {
     if (!isConnected) return "0.0";
 
-    if (tokenSymbol === "ETH") {
-      return ethBalance
+    if (tokenSymbol === "WETH") {
+      return wethBalance
         ? parseFloat(
-            formatUnits(ethBalance.value, ethBalance.decimals)
+            formatUnits(wethBalance.value, wethBalance.decimals)
           ).toFixed(4)
         : "0.0";
     } else {

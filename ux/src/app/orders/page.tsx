@@ -150,11 +150,13 @@ function OrdersPage() {
   const { address } = useAccount();
   const {
     createTrailingStop,
+    hash: createHash,
     isPending: isCreating,
     isConfirming: isCreatingConfirming,
     isConfirmed: isCreated,
     isConfirmError: isCreateError,
     error: createError,
+    receiptError: createReceiptError,
   } = useCreateTrailingStop();
 
   const {
@@ -225,12 +227,18 @@ function OrdersPage() {
 
   useEffect(() => {
     if (isCreateError) {
+      const errorMsg = createReceiptError?.message || "Transaction reverted";
+      const shortHash = createHash
+        ? `${createHash.slice(0, 10)}...${createHash.slice(-8)}`
+        : "";
       setToast({
-        message: "Transaction reverted. Check contract or balances.",
+        message: `${errorMsg}${
+          shortHash ? ` (${shortHash})` : ""
+        }. Check Sepolia scan for details.`,
         type: "error",
       });
     }
-  }, [isCreateError]);
+  }, [isCreateError, createReceiptError, createHash]);
 
   // Show errors
   useEffect(() => {

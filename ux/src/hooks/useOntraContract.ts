@@ -19,6 +19,7 @@ export function useCreateTrailingStop() {
     isLoading: isConfirming,
     isSuccess: isConfirmed,
     isError: isConfirmError,
+    error: receiptError,
   } = useWaitForTransactionReceipt({
     hash,
   });
@@ -55,6 +56,7 @@ export function useCreateTrailingStop() {
     isConfirmed,
     isConfirmError,
     error,
+    receiptError,
   };
 }
 

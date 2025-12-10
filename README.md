@@ -11,8 +11,9 @@ Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings ins
 ## Deployment Link:
 
 Sepolia Testnet:
-OntraV2Hook: 0x6B8cEc0189B95D802F1bC0741030706372319040
-SwapRouterWithLocker: 0xaEd599d995db2e0f0e16C87e21fcE824aD63Ed70
+OntraV2Hook: 0x03bbb7a3175302e3F5A5B43404f91251B35c1040
+SwapRouterWithLocker: 0x59501689612D3b8538D39da02bc13c835639D9B1
+Owner: 0x607A577659Cad2A2799120DfdEEde39De2D38706
 
 ## Todo List
 

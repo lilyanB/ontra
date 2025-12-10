@@ -60,8 +60,9 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     /**
      * @param manager The pool manager address
      * @param aavePool The Aave pool address
+     * @param owner The owner address
      */
-    constructor(IPoolManager manager, address aavePool) BaseHook(manager) Ownable(msg.sender) {
+    constructor(IPoolManager manager, address aavePool, address owner) BaseHook(manager) Ownable(owner) {
         AAVE_POOL = IPool(aavePool);
     }
 

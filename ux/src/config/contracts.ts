@@ -43,7 +43,7 @@ import { keccak256, encodeAbiParameters } from "viem";
 
 // Helper to compute PoolId (keccak256 of PoolKey)
 export function getPoolId(): `0x${string}` {
-  const poolId = keccak256(
+  return keccak256(
     encodeAbiParameters(
       [
         { type: "address", name: "currency0" },
@@ -61,6 +61,4 @@ export function getPoolId(): `0x${string}` {
       ]
     )
   ) as `0x${string}`;
-  console.log("Computed PoolId:", poolId);
-  return poolId;
 }

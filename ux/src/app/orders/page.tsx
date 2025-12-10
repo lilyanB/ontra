@@ -32,54 +32,9 @@ function OrdersPage() {
     type: "pending" | "success" | "error";
   } | null>(null);
 
-  const [myOrders, setMyOrders] = useState<TrailingStopOrder[]>([
-    {
-      id: "1",
-      token: "WETH",
-      amount: "1.5",
-      trailingPercent: "10",
-      status: "active",
-      createdAt: "2025-12-01",
-    },
-    {
-      id: "2",
-      token: "USDC",
-      amount: "5000",
-      trailingPercent: "10",
-      status: "active",
-      createdAt: "2025-12-03",
-    },
-  ]);
 
-  const [contractOrders, setContractOrders] = useState<TrailingStopOrder[]>([
-    {
-      id: "c1",
-      token: "WETH",
-      amount: "2.3",
-      trailingPercent: "5",
-      status: "active",
-      createdAt: "2025-11-28",
-      owner: "0x1234...5678",
-    },
-    {
-      id: "c2",
-      token: "USDC",
-      amount: "5000",
-      trailingPercent: "5",
-      status: "active",
-      createdAt: "2025-11-30",
-      owner: "0xabcd...efgh",
-    },
-    {
-      id: "c3",
-      token: "WETH",
-      amount: "0.1",
-      trailingPercent: "15",
-      status: "triggered",
-      createdAt: "2025-12-05",
-      owner: "0x9876...5432",
-    },
-  ]);
+
+
 
   const [formData, setFormData] = useState({
     tokenToDeposit: "",
@@ -139,13 +94,8 @@ function OrdersPage() {
   };
 
   const handleCancelOrder = (orderId: string) => {
-    setMyOrders(
-      myOrders.map((order) =>
-        order.id === orderId
-          ? { ...order, status: "cancelled" as const }
-          : order
-      )
-    );
+    // TODO: Implement cancel order with withdrawTrailingStop
+    console.log("Cancel order:", orderId);
   };
 
   const { address } = useAccount();
@@ -173,7 +123,11 @@ function OrdersPage() {
     address
   );
 
-  const { userOrders, isLoading: isLoadingOrders, refetch: refetchOrders } = useUserOrders();
+  const {
+    userOrders,
+    isLoading: isLoadingOrders,
+    refetch: refetchOrders,
+  } = useUserOrders();
 
   // Refetch allowance when approval is confirmed
   useEffect(() => {
@@ -278,29 +232,29 @@ function OrdersPage() {
 
   // Convert blockchain orders to display format
   const blockchainOrders: TrailingStopOrder[] = useMemo(() => {
-    console.log("User orders from contract:", userOrders);
     return userOrders.map((order) => {
-      const tierPercent = order.tier === 0 ? "5" : order.tier === 1 ? "10" : "15";
+      const tierPercent =
+        order.tier === 0 ? "5" : order.tier === 1 ? "10" : "15";
       const token = order.isLong ? "USDC" : "WETH";
       const tokenDecimals = order.isLong ? 6 : 18;
-      
+
       // Calculate user's amount based on shares
       let amount = "0";
       if (order.poolData) {
-        const totalShares = order.isLong 
-          ? order.poolData.totalSharesLong 
+        const totalShares = order.isLong
+          ? order.poolData.totalSharesLong
           : order.poolData.totalSharesShort;
-        const totalTokens = order.isLong 
-          ? order.poolData.totalToken0Long 
+        const totalTokens = order.isLong
+          ? order.poolData.totalToken0Long
           : order.poolData.totalToken1Short;
-        
+
         if (totalShares > BigInt(0)) {
           const userAmount = (order.shares * totalTokens) / totalShares;
           amount = formatUnits(userAmount, tokenDecimals);
         }
       }
 
-      const isExecuted = order.isLong 
+      const isExecuted = order.isLong
         ? (order.poolData?.executedToken1 ?? BigInt(0)) > BigInt(0)
         : (order.poolData?.executedToken0 ?? BigInt(0)) > BigInt(0);
 
@@ -315,7 +269,7 @@ function OrdersPage() {
     });
   }, [userOrders]);
 
-  const currentOrders = activeTab === "my-orders" ? blockchainOrders : contractOrders;
+  const currentOrders = blockchainOrders;
 
   return (
     <>
@@ -515,19 +469,8 @@ function OrdersPage() {
             </div>
 
             <div className="tabs-container">
-              <button
-                className={`tab ${activeTab === "my-orders" ? "active" : ""}`}
-                onClick={() => setActiveTab("my-orders")}
-              >
-                My Orders ({myOrders.length})
-              </button>
-              <button
-                className={`tab ${
-                  activeTab === "contract-orders" ? "active" : ""
-                }`}
-                onClick={() => setActiveTab("contract-orders")}
-              >
-                Contract Orders ({contractOrders.length})
+              <button className="tab active">
+                My Orders ({blockchainOrders.length})
               </button>
             </div>
 
@@ -535,15 +478,11 @@ function OrdersPage() {
               <div className="empty-state">
                 <div className="empty-icon">📊</div>
                 <h3>No orders yet</h3>
-                <p>
-                  {activeTab === "my-orders"
-                    ? "Create your first trailing stop loss order"
-                    : "No orders on the contract"}
-                </p>
+                <p>Create your first trailing stop loss order</p>
               </div>
             ) : (
               <div className="orders-list">
-                {currentOrders.map((order) => (
+                {currentOrders.map((order: TrailingStopOrder) => (
                   <div key={order.id} className="order-card">
                     <div className="order-row">
                       <div className="order-info">

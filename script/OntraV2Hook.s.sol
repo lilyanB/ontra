@@ -12,6 +12,8 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol";
+import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 import {OntraV2Hook} from "../src/OntraV2Hook.sol";
 import {SwapRouterWithLocker} from "../test/unit/utils/SwapRouterWithLocker.sol";
@@ -29,10 +31,11 @@ contract OntraV2HookScript is Script {
     address internal constant POOL_MANAGER = 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
     // SQRT_PRICE_1_1 = sqrt(1) * 2^96 = 79228162514264337593543950336
     uint160 internal constant SQRT_PRICE_1_1 = 79228162514264337593543950336;
+    bytes internal constant ZERO_BYTES = "";
 
     function run(address aavePool, address usdc, address weth)
         external
-        returns (OntraV2Hook ontraV2Hook_, SwapRouterWithLocker swapRouter_)
+        returns (OntraV2Hook ontraV2Hook_, SwapRouterWithLocker swapRouter_, PoolKey memory key_)
     {
         // Get the actual caller address
         (, address sender,) = vm.readCallers();
@@ -77,15 +80,35 @@ contract OntraV2HookScript is Script {
         IERC20(weth).approve(address(POOL_MANAGER), type(uint256).max);
 
         // Initialize the pool
-        PoolKey memory key = PoolKey({
+        key_ = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 3000, // 0.3% fee
+            fee: 0, // 0% fee
             tickSpacing: 60,
             hooks: IHooks(address(ontraV2Hook_))
         });
 
-        IPoolManager(POOL_MANAGER).initialize(key, SQRT_PRICE_1_1);
+        IPoolManager(POOL_MANAGER).initialize(key_, SQRT_PRICE_1_1);
+
+        // Deploy PoolModifyLiquidityTest router for adding liquidity
+        PoolModifyLiquidityTest modifyLiquidityRouter = new PoolModifyLiquidityTest(IPoolManager(POOL_MANAGER));
+
+        // Approve tokens for the modify liquidity router
+        IERC20(usdc).approve(address(modifyLiquidityRouter), type(uint256).max);
+        IERC20(weth).approve(address(modifyLiquidityRouter), type(uint256).max);
+
+        // Add minimal liquidity just to enable swaps
+        // Range of ±1200 ticks (~12% movement) should be sufficient for testing
+        modifyLiquidityRouter.modifyLiquidity(
+            key_,
+            ModifyLiquidityParams({
+                tickLower: -1200, // ~1% below current price
+                tickUpper: 1200, // ~1% above current price
+                liquidityDelta: 10000, // Minimal liquidity
+                salt: bytes32(0)
+            }),
+            ZERO_BYTES
+        );
 
         vm.stopBroadcast();
     }

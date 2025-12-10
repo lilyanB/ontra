@@ -16,7 +16,6 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {Locker} from "v4-periphery/src/libraries/Locker.sol";
 import {IMsgSender} from "v4-periphery/src/interfaces/IMsgSender.sol";
 
 import {IOntraV2Hook} from "./interfaces/IOntraV2Hook.sol";
@@ -39,20 +38,37 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     IPool public immutable override AAVE_POOL;
 
     // Mapping of verified routers that can be trusted to return the original msg.sender
-    mapping(address swapRouter => bool approved) public verifiedRouters;
+    mapping(address swapRouter => bool approved) internal _verifiedRouters;
 
-    mapping(PoolId poolId => int24 lastTick) public lastTicks;
+    mapping(PoolId poolId => int24 lastTick) internal _lastTicks;
 
     // poolId => tier => epoch => pool data
     mapping(PoolId => mapping(TrailingStopTier => mapping(uint256 => TrailingStopPool))) internal _trailingPools;
 
     // poolId => tier => isLong => current epoch
-    mapping(PoolId => mapping(TrailingStopTier => mapping(bool => uint256))) public currentEpoch;
+    mapping(PoolId => mapping(TrailingStopTier => mapping(bool => uint256))) internal _currentEpoch;
 
     // user => poolId => tier => isLong => epoch => shares
     mapping(
         address => mapping(PoolId => mapping(TrailingStopTier => mapping(bool => mapping(uint256 => uint256))))
-    ) public userShares;
+    ) internal _userShares;
+
+    /* -------------------------------------------------------------------------- */
+    /*                                Constructor                                 */
+    /* -------------------------------------------------------------------------- */
+
+    /**
+     * @param manager The pool manager address
+     * @param aavePool The Aave pool address
+     */
+    constructor(IPoolManager manager, address aavePool) BaseHook(manager) Ownable(msg.sender) {
+        AAVE_POOL = IPool(aavePool);
+    }
+
+    /// @inheritdoc IOntraV2Hook
+    function getLastTick(PoolId poolId) external view returns (int24 lastTick_) {
+        return _lastTicks[poolId];
+    }
 
     /// @inheritdoc IOntraV2Hook
     function trailingPools(PoolId poolId, TrailingStopTier tier, uint256 epoch)
@@ -71,7 +87,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         override
         returns (uint256 shares)
     {
-        return userShares[user][poolId][tier][isLong][epoch];
+        return _userShares[user][poolId][tier][isLong][epoch];
     }
 
     /// @inheritdoc IOntraV2Hook
@@ -81,19 +97,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         override
         returns (uint256 epoch)
     {
-        return currentEpoch[poolId][tier][isLong];
-    }
-
-    /* -------------------------------------------------------------------------- */
-    /*                                Constructor                                 */
-    /* -------------------------------------------------------------------------- */
-
-    /**
-     * @param manager The pool manager address
-     * @param aavePool The Aave pool address
-     */
-    constructor(IPoolManager manager, address aavePool) BaseHook(manager) Ownable(msg.sender) {
-        AAVE_POOL = IPool(aavePool);
+        return _currentEpoch[poolId][tier][isLong];
     }
 
     /* -------------------------------------------------------------------------- */
@@ -102,7 +106,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
 
     /// @inheritdoc IOntraV2Hook
     function setRouter(address router, bool approved) external onlyOwner {
-        verifiedRouters[router] = approved;
+        _verifiedRouters[router] = approved;
     }
 
     /* -------------------------------------------------------------------------- */
@@ -129,7 +133,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                              Public Functions                              */
+    /*                             External Functions                             */
     /* -------------------------------------------------------------------------- */
 
     /// @inheritdoc IOntraV2Hook
@@ -148,7 +152,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
 
         // Get current epoch for this direction
-        uint256 epoch = currentEpoch[key.toId()][tier][isLong];
+        uint256 epoch = _currentEpoch[key.toId()][tier][isLong];
 
         // Update pool
         TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
@@ -191,7 +195,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         }
 
         // Store user shares for this epoch
-        userShares[msg.sender][key.toId()][tier][isLong][epoch] += shares;
+        _userShares[msg.sender][key.toId()][tier][isLong][epoch] += shares;
 
         emit TrailingStopCreated(msg.sender, key.toId(), amount, shares, isLong, tier, epoch);
 
@@ -208,7 +212,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     ) external returns (uint256 amountWithdrawn) {
         if (shares == 0) revert NoShares();
 
-        uint256 userSharesAmount = userShares[msg.sender][key.toId()][tier][isLong][epoch];
+        uint256 userSharesAmount = _userShares[msg.sender][key.toId()][tier][isLong][epoch];
         if (userSharesAmount < shares) revert NoShares();
 
         TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
@@ -254,7 +258,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         }
 
         // Update user shares
-        userShares[msg.sender][key.toId()][tier][isLong][epoch] -= shares;
+        _userShares[msg.sender][key.toId()][tier][isLong][epoch] -= shares;
 
         emit TrailingStopWithdrawn(msg.sender, key.toId(), shares, amountWithdrawn, isLong, tier, epoch);
 
@@ -266,14 +270,14 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
 
         // Check and execute longs
-        uint256 longEpoch = currentEpoch[key.toId()][tier][true];
+        uint256 longEpoch = _currentEpoch[key.toId()][tier][true];
         TrailingStopPool storage longPool = _trailingPools[key.toId()][tier][longEpoch];
         if (longPool.executedToken1 == 0 && longPool.totalSharesLong > 0 && currentTick <= longPool.triggerTickLong) {
             _executePoolTrailingStopLong(key, tier, longEpoch, currentTick, true, msg.sender);
         }
 
         // Check and execute shorts
-        uint256 shortEpoch = currentEpoch[key.toId()][tier][false];
+        uint256 shortEpoch = _currentEpoch[key.toId()][tier][false];
         TrailingStopPool storage shortPool = _trailingPools[key.toId()][tier][shortEpoch];
         if (
             shortPool.executedToken0 == 0 && shortPool.totalSharesShort > 0 && currentTick >= shortPool.triggerTickShort
@@ -287,7 +291,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     /* -------------------------------------------------------------------------- */
 
     function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
-        lastTicks[key.toId()] = tick;
+        _lastTicks[key.toId()] = tick;
         return this.afterInitialize.selector;
     }
 
@@ -297,14 +301,14 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         returns (bytes4, int128)
     {
         (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
-        int24 previousTick = lastTicks[key.toId()];
-        lastTicks[key.toId()] = currentTick;
+        int24 previousTick = _lastTicks[key.toId()];
+        _lastTicks[key.toId()] = currentTick;
 
         // Get the real msg.sender from trusted router
         address actualSender = address(0);
 
         // Try to get the actual sender from the router if it implements IMsgSender
-        if (verifiedRouters[sender]) {
+        if (_verifiedRouters[sender]) {
             try IMsgSender(sender).msgSender() returns (address swapper) {
                 actualSender = swapper;
             } catch {
@@ -344,7 +348,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     function _updateLongTrailingStops(PoolKey calldata key, int24 currentTick) internal {
         for (uint256 i = 0; i < 3; i++) {
             TrailingStopTier tier = TrailingStopTier(i);
-            uint256 epoch = currentEpoch[key.toId()][tier][true];
+            uint256 epoch = _currentEpoch[key.toId()][tier][true];
             TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
             if (pool.executedToken1 > 0 || pool.totalSharesLong == 0) continue;
@@ -359,7 +363,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     function _updateShortTrailingStops(PoolKey calldata key, int24 currentTick) internal {
         for (uint256 i = 0; i < 3; i++) {
             TrailingStopTier tier = TrailingStopTier(i);
-            uint256 epoch = currentEpoch[key.toId()][tier][false];
+            uint256 epoch = _currentEpoch[key.toId()][tier][false];
             TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
             if (pool.executedToken0 > 0 || pool.totalSharesShort == 0) continue;
@@ -374,7 +378,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     function _checkAndExecuteLongTrailingStops(PoolKey calldata key, int24 currentTick, address sender) internal {
         for (uint256 i = 0; i < 3; i++) {
             TrailingStopTier tier = TrailingStopTier(i);
-            uint256 epoch = currentEpoch[key.toId()][tier][true];
+            uint256 epoch = _currentEpoch[key.toId()][tier][true];
             TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
             if (pool.executedToken1 > 0 || pool.totalSharesLong == 0) continue;
@@ -389,7 +393,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
     function _checkAndExecuteShortTrailingStops(PoolKey calldata key, int24 currentTick, address sender) internal {
         for (uint256 i = 0; i < 3; i++) {
             TrailingStopTier tier = TrailingStopTier(i);
-            uint256 epoch = currentEpoch[key.toId()][tier][false];
+            uint256 epoch = _currentEpoch[key.toId()][tier][false];
             TrailingStopPool storage pool = _trailingPools[key.toId()][tier][epoch];
 
             if (pool.executedToken0 > 0 || pool.totalSharesShort == 0) continue;
@@ -435,7 +439,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         pool.totalToken0Long = 0;
 
         // Increment epoch for new deposits
-        currentEpoch[key.toId()][tier][true]++;
+        _currentEpoch[key.toId()][tier][true]++;
 
         emit TrailingStopExecutedLong(
             key.toId(), tier, epoch, withdrawn0 - yieldAmount, amount1Received, executionTick, yieldAmount, executor
@@ -477,7 +481,7 @@ contract OntraV2Hook is BaseHook, IOntraV2Hook, Ownable {
         pool.totalToken1Short = 0;
 
         // Increment epoch for new deposits
-        currentEpoch[key.toId()][tier][false]++;
+        _currentEpoch[key.toId()][tier][false]++;
 
         emit TrailingStopExecutedShort(
             key.toId(), tier, epoch, withdrawn1 - yieldAmount, amount0Received, executionTick, yieldAmount, executor

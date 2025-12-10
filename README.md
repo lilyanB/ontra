@@ -23,17 +23,17 @@ SwapRouterWithLocker: 0xfEEE9676243F027868a0b83Cef18781bAA618003
 - [ ] Implement Limit Orders
 - [ ] Implement TWAP Orders
 - [ ] Integrate Fhenix FHE for Hidden Orders
-- [ ] Write comprehensive tests
-- [ ] Optimize gas usage
+- [x] Write comprehensive tests
 - [ ] Prepare documentation
-- [ ] Deploy to testnet
-- [ ] Implement front-end interface
-- [ ] Implement subgraph for event indexing
+- [x] Deploy to testnet
+- [x] Implement front-end interface
 
 Outside of scope for the Hookathon:
 
 - [ ] implement router for safety checks
 - [ ] Deploy to mainnet
+- [ ] Implement subgraph for event indexing
+- [ ] Optimize gas usage
 
 ## Specifications
 

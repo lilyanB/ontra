@@ -226,9 +226,9 @@ interface IOntraV2Hook {
     /**
      * @notice Returns the last recorded tick for a pool
      * @param poolId The pool ID
-     * @return The last tick
+     * @return lastTick_ The last tick
      */
-    function lastTicks(PoolId poolId) external view returns (int24);
+    function getLastTick(PoolId poolId) external view returns (int24 lastTick_);
 
     /**
      * @notice Returns trailing stop pool data

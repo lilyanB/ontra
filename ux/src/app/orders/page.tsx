@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 interface TrailingStopOrder {
   id: string;
@@ -72,12 +72,44 @@ function OrdersPage() {
     trailingPercent: "5",
   });
 
-  // Simulated current prices (to be replaced with real contract data)
-  const currentPrices = {
-    USDC: "1.00",
-    WETH: "2,450.00",
+  // Simulated pool prices (to be replaced with real contract data)
+  // Price represents how much of the other token you get per 1 unit of the selected token
+  const poolPrices = {
+    USDC: { pair: "WETH", rate: 0.00040816 }, // 1 USDC = 0.00040816 WETH
+    WETH: { pair: "USDC", rate: 2450.0 }, // 1 WETH = 2450 USDC
   };
 
+  // Calculate liquidation prices based on trailing percentage
+  const liquidationPrices = useMemo(() => {
+    if (!formData.tokenToDeposit) {
+      return {
+        5: { price: "0.00", pair: "" },
+        10: { price: "0.00", pair: "" },
+        15: { price: "0.00", pair: "" },
+      };
+    }
+
+    const poolPrice =
+      poolPrices[formData.tokenToDeposit as keyof typeof poolPrices];
+    const currentRate = poolPrice.rate;
+
+    const calculate = (percent: number) => {
+      const liquidationRate = currentRate * (1 - percent / 100);
+      return {
+        price: liquidationRate.toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 6,
+        }),
+        pair: poolPrice.pair,
+      };
+    };
+
+    return {
+      5: calculate(5),
+      10: calculate(10),
+      15: calculate(15),
+    };
+  }, [formData.tokenToDeposit]);
   const getStatusColor = (status: string) => {
     switch (status) {
       case "active":
@@ -135,11 +167,16 @@ function OrdersPage() {
                   Current {formData.tokenToDeposit} Price:
                 </span>
                 <span className="price-value">
-                  $
+                  {poolPrices[
+                    formData.tokenToDeposit as keyof typeof poolPrices
+                  ].rate.toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 6,
+                  })}{" "}
                   {
-                    currentPrices[
-                      formData.tokenToDeposit as keyof typeof currentPrices
-                    ]
+                    poolPrices[
+                      formData.tokenToDeposit as keyof typeof poolPrices
+                    ].pair
                   }
                 </span>
               </div>
@@ -193,7 +230,15 @@ function OrdersPage() {
                         })
                       }
                     />
-                    <span>5%</span>
+                    <div className="radio-content">
+                      <span className="radio-percent">5%</span>
+                      {formData.tokenToDeposit && (
+                        <span className="liquidation-price">
+                          Liq: {liquidationPrices[5].price}{" "}
+                          {liquidationPrices[5].pair}
+                        </span>
+                      )}
+                    </div>
                   </label>
                   <label className="radio-option">
                     <input
@@ -208,7 +253,15 @@ function OrdersPage() {
                         })
                       }
                     />
-                    <span>10%</span>
+                    <div className="radio-content">
+                      <span className="radio-percent">10%</span>
+                      {formData.tokenToDeposit && (
+                        <span className="liquidation-price">
+                          Liq: {liquidationPrices[10].price}{" "}
+                          {liquidationPrices[10].pair}
+                        </span>
+                      )}
+                    </div>
                   </label>
                   <label className="radio-option">
                     <input
@@ -223,7 +276,15 @@ function OrdersPage() {
                         })
                       }
                     />
-                    <span>15%</span>
+                    <div className="radio-content">
+                      <span className="radio-percent">15%</span>
+                      {formData.tokenToDeposit && (
+                        <span className="liquidation-price">
+                          Liq: {liquidationPrices[15].price}{" "}
+                          {liquidationPrices[15].pair}
+                        </span>
+                      )}
+                    </div>
                   </label>
                 </div>
                 <span className="form-hint">

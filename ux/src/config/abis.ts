@@ -55,6 +55,73 @@ export const ONTRA_V2_HOOK_ABI = [
     stateMutability: "nonpayable",
     type: "function",
   },
+  {
+    inputs: [
+      { internalType: "address", name: "user", type: "address" },
+      { internalType: "PoolId", name: "poolId", type: "bytes32" },
+      {
+        internalType: "enum IOntraV2Hook.TrailingStopTier",
+        name: "tier",
+        type: "uint8",
+      },
+      { internalType: "bool", name: "isLong", type: "bool" },
+      { internalType: "uint256", name: "epoch", type: "uint256" },
+    ],
+    name: "getUserShares",
+    outputs: [{ internalType: "uint256", name: "shares", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "PoolId", name: "poolId", type: "bytes32" },
+      {
+        internalType: "enum IOntraV2Hook.TrailingStopTier",
+        name: "tier",
+        type: "uint8",
+      },
+      { internalType: "bool", name: "isLong", type: "bool" },
+    ],
+    name: "getCurrentEpoch",
+    outputs: [{ internalType: "uint256", name: "epoch", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "PoolId", name: "poolId", type: "bytes32" },
+      {
+        internalType: "enum IOntraV2Hook.TrailingStopTier",
+        name: "tier",
+        type: "uint8",
+      },
+      { internalType: "uint256", name: "epoch", type: "uint256" },
+    ],
+    name: "trailingPools",
+    outputs: [
+      {
+        components: [
+          { internalType: "int24", name: "highestTickEver", type: "int24" },
+          { internalType: "int24", name: "lowestTickEver", type: "int24" },
+          { internalType: "int24", name: "triggerTickLong", type: "int24" },
+          { internalType: "int24", name: "triggerTickShort", type: "int24" },
+          { internalType: "uint256", name: "totalToken0Long", type: "uint256" },
+          { internalType: "uint256", name: "totalToken1Short", type: "uint256" },
+          { internalType: "uint256", name: "totalSharesLong", type: "uint256" },
+          { internalType: "uint256", name: "totalSharesShort", type: "uint256" },
+          { internalType: "uint256", name: "executedToken1", type: "uint256" },
+          { internalType: "uint256", name: "executedToken0", type: "uint256" },
+          { internalType: "uint256", name: "aaveDepositedToken0Long", type: "uint256" },
+          { internalType: "uint256", name: "aaveDepositedToken1Short", type: "uint256" },
+        ],
+        internalType: "struct IOntraV2Hook.TrailingStopPool",
+        name: "pool",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
 ] as const;
 
 // ERC20 ABI for token approval

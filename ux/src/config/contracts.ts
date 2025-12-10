@@ -38,3 +38,29 @@ export const TRAILING_STOP_TIERS = {
   "10": 1, // TEN_PERCENT
   "15": 2, // FIFTEEN_PERCENT
 } as const;
+
+import { keccak256, encodeAbiParameters } from "viem";
+
+// Helper to compute PoolId (keccak256 of PoolKey)
+export function getPoolId(): `0x${string}` {
+  const poolId = keccak256(
+    encodeAbiParameters(
+      [
+        { type: "address", name: "currency0" },
+        { type: "address", name: "currency1" },
+        { type: "uint24", name: "fee" },
+        { type: "int24", name: "tickSpacing" },
+        { type: "address", name: "hooks" },
+      ],
+      [
+        POOL_KEY.currency0,
+        POOL_KEY.currency1,
+        POOL_KEY.fee,
+        POOL_KEY.tickSpacing,
+        POOL_KEY.hooks,
+      ]
+    )
+  ) as `0x${string}`;
+  console.log("Computed PoolId:", poolId);
+  return poolId;
+}

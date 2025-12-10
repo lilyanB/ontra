@@ -2,14 +2,15 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useAccount } from "wagmi";
-import { parseUnits } from "viem";
+import { parseUnits, formatUnits } from "viem";
 import {
   useCreateTrailingStop,
   useApproveToken,
   useTokenAllowance,
 } from "@/hooks/useOntraContract";
-import { TOKENS } from "@/config/contracts";
+import { TOKENS, POOL_KEY } from "@/config/contracts";
 import Toast from "@/components/Toast";
+import { useUserOrders } from "@/hooks/useUserOrders";
 
 interface TrailingStopOrder {
   id: string;
@@ -172,6 +173,8 @@ function OrdersPage() {
     address
   );
 
+  const { userOrders, isLoading: isLoadingOrders, refetch: refetchOrders } = useUserOrders();
+
   // Refetch allowance when approval is confirmed
   useEffect(() => {
     if (isApproved) {
@@ -205,25 +208,18 @@ function OrdersPage() {
     }
   }, [isCreatingConfirming]);
 
-  // Reset form and add to orders list when order is created
+  // Reset form and refetch orders when order is created
   useEffect(() => {
     if (isCreated) {
       setToast({
         message: "Trailing stop order created successfully!",
         type: "success",
       });
-      const newOrder: TrailingStopOrder = {
-        id: Date.now().toString(),
-        token: formData.tokenToDeposit,
-        amount: formData.amount,
-        trailingPercent: formData.trailingPercent,
-        status: "active",
-        createdAt: new Date().toISOString().split("T")[0],
-      };
-      setMyOrders([...myOrders, newOrder]);
       setFormData({ tokenToDeposit: "", amount: "", trailingPercent: "5" });
+      // Refetch orders from contract
+      setTimeout(() => refetchOrders(), 2000); // Wait 2s for blockchain confirmation
     }
-  }, [isCreated]);
+  }, [isCreated, refetchOrders]);
 
   useEffect(() => {
     if (isCreateError) {
@@ -280,7 +276,46 @@ function OrdersPage() {
     }
   };
 
-  const currentOrders = activeTab === "my-orders" ? myOrders : contractOrders;
+  // Convert blockchain orders to display format
+  const blockchainOrders: TrailingStopOrder[] = useMemo(() => {
+    console.log("User orders from contract:", userOrders);
+    return userOrders.map((order) => {
+      const tierPercent = order.tier === 0 ? "5" : order.tier === 1 ? "10" : "15";
+      const token = order.isLong ? "USDC" : "WETH";
+      const tokenDecimals = order.isLong ? 6 : 18;
+      
+      // Calculate user's amount based on shares
+      let amount = "0";
+      if (order.poolData) {
+        const totalShares = order.isLong 
+          ? order.poolData.totalSharesLong 
+          : order.poolData.totalSharesShort;
+        const totalTokens = order.isLong 
+          ? order.poolData.totalToken0Long 
+          : order.poolData.totalToken1Short;
+        
+        if (totalShares > BigInt(0)) {
+          const userAmount = (order.shares * totalTokens) / totalShares;
+          amount = formatUnits(userAmount, tokenDecimals);
+        }
+      }
+
+      const isExecuted = order.isLong 
+        ? (order.poolData?.executedToken1 ?? BigInt(0)) > BigInt(0)
+        : (order.poolData?.executedToken0 ?? BigInt(0)) > BigInt(0);
+
+      return {
+        id: `${order.tier}-${order.isLong}-${order.epoch}`,
+        token,
+        amount,
+        trailingPercent: tierPercent,
+        status: isExecuted ? "triggered" : "active",
+        createdAt: new Date().toISOString().split("T")[0],
+      } as TrailingStopOrder;
+    });
+  }, [userOrders]);
+
+  const currentOrders = activeTab === "my-orders" ? blockchainOrders : contractOrders;
 
   return (
     <>

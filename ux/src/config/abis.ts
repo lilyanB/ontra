@@ -147,6 +147,60 @@ export const ONTRA_V2_HOOK_ABI = [
   },
 ] as const;
 
+// SwapRouterWithLocker ABI
+export const SWAP_ROUTER_ABI = [
+  {
+    inputs: [
+      {
+        components: [
+          { internalType: "Currency", name: "currency0", type: "address" },
+          { internalType: "Currency", name: "currency1", type: "address" },
+          { internalType: "uint24", name: "fee", type: "uint24" },
+          { internalType: "int24", name: "tickSpacing", type: "int24" },
+          { internalType: "contract IHooks", name: "hooks", type: "address" },
+        ],
+        internalType: "struct PoolKey",
+        name: "key",
+        type: "tuple",
+      },
+      {
+        components: [
+          { internalType: "bool", name: "zeroForOne", type: "bool" },
+          { internalType: "int256", name: "amountSpecified", type: "int256" },
+          {
+            internalType: "uint160",
+            name: "sqrtPriceLimitX96",
+            type: "uint160",
+          },
+        ],
+        internalType: "struct SwapParams",
+        name: "params",
+        type: "tuple",
+      },
+      {
+        components: [
+          { internalType: "bool", name: "takeClaims", type: "bool" },
+          { internalType: "bool", name: "settleUsingBurn", type: "bool" },
+        ],
+        internalType: "struct SwapRouterWithLocker.TestSettings",
+        name: "testSettings",
+        type: "tuple",
+      },
+      { internalType: "bytes", name: "hookData", type: "bytes" },
+    ],
+    name: "swap",
+    outputs: [
+      {
+        internalType: "BalanceDelta",
+        name: "delta",
+        type: "int256",
+      },
+    ],
+    stateMutability: "payable",
+    type: "function",
+  },
+] as const;
+
 // ERC20 ABI for token approval
 export const ERC20_ABI = [
   {

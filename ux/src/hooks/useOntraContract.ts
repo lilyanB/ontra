@@ -61,7 +61,7 @@ export function useCreateTrailingStop() {
   };
 }
 
-export function useApproveToken() {
+export function useApproveToken(spender?: `0x${string}`) {
   const { data: hash, writeContract, isPending, error } = useWriteContract();
 
   const {
@@ -75,12 +75,13 @@ export function useApproveToken() {
   const approveToken = async (tokenSymbol: "USDC" | "WETH", amount: string) => {
     const token = TOKENS[tokenSymbol];
     const amountBigInt = parseUnits(amount, token.decimals);
+    const spenderAddress = spender || CONTRACTS.OntraV2Hook;
 
     writeContract({
       address: token.address,
       abi: ERC20_ABI,
       functionName: "approve",
-      args: [CONTRACTS.OntraV2Hook, amountBigInt],
+      args: [spenderAddress, amountBigInt],
     });
   };
 
@@ -97,15 +98,17 @@ export function useApproveToken() {
 
 export function useTokenAllowance(
   tokenSymbol: "USDC" | "WETH" | undefined,
-  userAddress: `0x${string}` | undefined
+  userAddress: `0x${string}` | undefined,
+  spender?: `0x${string}`
 ) {
   const token = tokenSymbol ? TOKENS[tokenSymbol] : undefined;
+  const spenderAddress = spender || CONTRACTS.OntraV2Hook;
 
   const { data: allowance, refetch } = useReadContract({
     address: token?.address,
     abi: ERC20_ABI,
     functionName: "allowance",
-    args: userAddress ? [userAddress, CONTRACTS.OntraV2Hook] : undefined,
+    args: userAddress ? [userAddress, spenderAddress] : undefined,
     query: {
       enabled: !!token && !!userAddress,
     },

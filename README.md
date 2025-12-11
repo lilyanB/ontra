@@ -45,6 +45,8 @@ PoolKey({
 
 ## Video Demonstration:
 
+https://github.com/user-attachments/assets/d9708251-c19d-46bc-82c2-1967a290e144
+
 ## Specifications
 
 - yield generated from Aave deposits during rehypothecation is returned to liquidity providers

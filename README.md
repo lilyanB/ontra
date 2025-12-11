@@ -19,26 +19,41 @@ SwapRouterWithLocker: 0xe15D86D762A71c44E4559D98f9C44B1e45c7709E
 Owner: 0x607A577659Cad2A2799120DfdEEde39De2D38706
 key: struct PoolKey PoolKey({ currency0: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238, currency1: 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9, fee: 0, tickSpacing: 60, hooks: 0xb842CEB38B4eD22F5189ABcb774168187DEA5040 })
 
+## Documentation
+
+To view the complete smart contract documentation:
+
+```bash
+forge doc --serve
+```
+
+The documentation will be available at `http://localhost:3000` and includes:
+
+- Complete API reference for all contracts
+- Function signatures and parameters
+- NatSpec comments
+- Contract inheritance diagrams
+
 ## Todo List
 
 - [x] Implement addLiquidity with Aave integration
 - [x] Implement removeLiquidity with Aave integration
 - [x] Implement rebalanceToAave function
 - [x] Implement Trailing Stop Orders
-- [ ] Implement Limit Orders
-- [ ] Implement TWAP Orders
 - [ ] Integrate Fhenix FHE for Hidden Orders
 - [x] Write comprehensive tests
-- [ ] Prepare documentation
+- [x] Prepare documentation
 - [x] Deploy to testnet
 - [x] Implement front-end interface
 
 Outside of scope for the Hookathon:
 
-- [ ] implement router for safety checks
-- [ ] Deploy to mainnet
 - [ ] Implement subgraph for event indexing
 - [ ] Optimize gas usage
+- [ ] Deploy to mainnet
+- [ ] implement router for safety checks
+- [ ] Implement TWAP Orders
+- [ ] Implement Limit Orders
 
 ## Specifications
 

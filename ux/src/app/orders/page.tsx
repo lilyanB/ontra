@@ -32,10 +32,6 @@ function OrdersPage() {
     type: "pending" | "success" | "error";
   } | null>(null);
 
-
-
-
-
   const [formData, setFormData] = useState({
     tokenToDeposit: "",
     amount: "",

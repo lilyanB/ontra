@@ -138,6 +138,13 @@ export const ONTRA_V2_HOOK_ABI = [
     stateMutability: "view",
     type: "function",
   },
+  {
+    inputs: [{ internalType: "PoolId", name: "poolId", type: "bytes32" }],
+    name: "getLastTick",
+    outputs: [{ internalType: "int24", name: "lastTick_", type: "int24" }],
+    stateMutability: "view",
+    type: "function",
+  },
 ] as const;
 
 // ERC20 ABI for token approval

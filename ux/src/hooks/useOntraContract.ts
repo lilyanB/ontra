@@ -3,7 +3,8 @@ import {
   useWaitForTransactionReceipt,
   useReadContract,
 } from "wagmi";
-import { parseUnits } from "viem";
+import { parseUnits, keccak256, encodeAbiParameters } from "viem";
+import { useMemo } from "react";
 import {
   CONTRACTS,
   POOL_KEY,
@@ -111,4 +112,116 @@ export function useTokenAllowance(
   });
 
   return { allowance: allowance as bigint | undefined, refetch };
+}
+
+export function useTierExecutionPrices(
+  tokenSymbol: "USDC" | "WETH" | undefined
+) {
+  const token = tokenSymbol ? TOKENS[tokenSymbol] : undefined;
+  const isLong = token
+    ? token.address.toLowerCase() === POOL_KEY.currency0.toLowerCase()
+    : false;
+
+  const poolId = useMemo(() => {
+    return keccak256(
+      encodeAbiParameters(
+        [
+          { type: "address", name: "currency0" },
+          { type: "address", name: "currency1" },
+          { type: "uint24", name: "fee" },
+          { type: "int24", name: "tickSpacing" },
+          { type: "address", name: "hooks" },
+        ],
+        [
+          POOL_KEY.currency0,
+          POOL_KEY.currency1,
+          POOL_KEY.fee,
+          POOL_KEY.tickSpacing,
+          POOL_KEY.hooks,
+        ]
+      )
+    ) as `0x${string}`;
+  }, []);
+
+  // Get current epochs for each tier
+  const { data: epoch0 } = useReadContract({
+    address: CONTRACTS.OntraV2Hook,
+    abi: ONTRA_V2_HOOK_ABI,
+    functionName: "getCurrentEpoch",
+    args: token ? [poolId, 0, isLong] : undefined,
+    query: { enabled: !!token },
+  });
+
+  const { data: epoch1 } = useReadContract({
+    address: CONTRACTS.OntraV2Hook,
+    abi: ONTRA_V2_HOOK_ABI,
+    functionName: "getCurrentEpoch",
+    args: token ? [poolId, 1, isLong] : undefined,
+    query: { enabled: !!token },
+  });
+
+  const { data: epoch2 } = useReadContract({
+    address: CONTRACTS.OntraV2Hook,
+    abi: ONTRA_V2_HOOK_ABI,
+    functionName: "getCurrentEpoch",
+    args: token ? [poolId, 2, isLong] : undefined,
+    query: { enabled: !!token },
+  });
+
+  // Get pool data for each tier
+  const { data: pool0 } = useReadContract({
+    address: CONTRACTS.OntraV2Hook,
+    abi: ONTRA_V2_HOOK_ABI,
+    functionName: "trailingPools",
+    args: epoch0 !== undefined ? [poolId, 0, epoch0] : undefined,
+    query: { enabled: epoch0 !== undefined },
+  });
+
+  const { data: pool1 } = useReadContract({
+    address: CONTRACTS.OntraV2Hook,
+    abi: ONTRA_V2_HOOK_ABI,
+    functionName: "trailingPools",
+    args: epoch1 !== undefined ? [poolId, 1, epoch1] : undefined,
+    query: { enabled: epoch1 !== undefined },
+  });
+
+  const { data: pool2 } = useReadContract({
+    address: CONTRACTS.OntraV2Hook,
+    abi: ONTRA_V2_HOOK_ABI,
+    functionName: "trailingPools",
+    args: epoch2 !== undefined ? [poolId, 2, epoch2] : undefined,
+    query: { enabled: epoch2 !== undefined },
+  });
+
+  // Get current tick from the hook
+  const { data: lastTick } = useReadContract({
+    address: CONTRACTS.OntraV2Hook,
+    abi: ONTRA_V2_HOOK_ABI,
+    functionName: "getLastTick",
+    args: [poolId],
+    query: { enabled: !!token },
+  });
+
+  return {
+    tier5: pool0
+      ? {
+          triggerTickLong: (pool0 as any).triggerTickLong,
+          triggerTickShort: (pool0 as any).triggerTickShort,
+        }
+      : { triggerTickLong: 0, triggerTickShort: 0 },
+    tier10: pool1
+      ? {
+          triggerTickLong: (pool1 as any).triggerTickLong,
+          triggerTickShort: (pool1 as any).triggerTickShort,
+        }
+      : { triggerTickLong: 0, triggerTickShort: 0 },
+    tier15: pool2
+      ? {
+          triggerTickLong: (pool2 as any).triggerTickLong,
+          triggerTickShort: (pool2 as any).triggerTickShort,
+        }
+      : { triggerTickLong: 0, triggerTickShort: 0 },
+    currentTick: lastTick as number | undefined,
+    isLong,
+  };
 }

@@ -7,10 +7,12 @@ import {
   useCreateTrailingStop,
   useApproveToken,
   useTokenAllowance,
+  useTierExecutionPrices,
 } from "@/hooks/useOntraContract";
 import { TOKENS, POOL_KEY } from "@/config/contracts";
 import Toast from "@/components/Toast";
 import { useUserOrders } from "@/hooks/useUserOrders";
+import { getExecutionPrice, formatCurrentPrice } from "@/utils/tickToPrice";
 
 interface TrailingStopOrder {
   id: string;
@@ -20,6 +22,7 @@ interface TrailingStopOrder {
   status: "active" | "triggered" | "cancelled";
   createdAt: string;
   owner?: string;
+  executionPrice?: string;
 }
 
 function OrdersPage() {
@@ -38,44 +41,39 @@ function OrdersPage() {
     trailingPercent: "5",
   });
 
-  // Simulated pool prices (to be replaced with real contract data)
-  // Price represents how much of the other token you get per 1 unit of the selected token
-  const poolPrices = {
-    USDC: { pair: "WETH", rate: 0.00040816 }, // 1 USDC = 0.00040816 WETH
-    WETH: { pair: "USDC", rate: 2450.0 }, // 1 WETH = 2450 USDC
-  };
+  // Get real execution prices from contract for each tier
+  const { tier5, tier10, tier15, currentTick, isLong } = useTierExecutionPrices(
+    formData.tokenToDeposit as "USDC" | "WETH" | undefined
+  );
 
-  // Calculate liquidation prices based on trailing percentage
-  const liquidationPrices = useMemo(() => {
+  // Format current price from contract tick
+  const currentPrice = useMemo(() => {
+    if (!formData.tokenToDeposit || currentTick === undefined) {
+      return "Loading...";
+    }
+    return formatCurrentPrice(
+      currentTick,
+      formData.tokenToDeposit as "USDC" | "WETH"
+    );
+  }, [currentTick, formData.tokenToDeposit]);
+
+  // Format execution prices for display
+  const executionPrices = useMemo(() => {
     if (!formData.tokenToDeposit) {
       return {
-        5: { price: "0.00", pair: "" },
-        10: { price: "0.00", pair: "" },
-        15: { price: "0.00", pair: "" },
+        5: "N/A",
+        10: "N/A",
+        15: "N/A",
       };
     }
 
-    const poolPrice =
-      poolPrices[formData.tokenToDeposit as keyof typeof poolPrices];
-    const currentRate = poolPrice.rate;
-
-    const calculate = (percent: number) => {
-      const liquidationRate = currentRate * (1 - percent / 100);
-      return {
-        price: liquidationRate.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 6,
-        }),
-        pair: poolPrice.pair,
-      };
-    };
-
     return {
-      5: calculate(5),
-      10: calculate(10),
-      15: calculate(15),
+      5: getExecutionPrice(tier5, isLong, currentTick, 5),
+      10: getExecutionPrice(tier10, isLong, currentTick, 10),
+      15: getExecutionPrice(tier15, isLong, currentTick, 15),
     };
-  }, [formData.tokenToDeposit]);
+  }, [formData.tokenToDeposit, tier5, tier10, tier15, currentTick, isLong]);
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "active":
@@ -254,6 +252,9 @@ function OrdersPage() {
         ? (order.poolData?.executedToken1 ?? BigInt(0)) > BigInt(0)
         : (order.poolData?.executedToken0 ?? BigInt(0)) > BigInt(0);
 
+      // Get execution price from pool data
+      const executionPrice = getExecutionPrice(order.poolData, order.isLong);
+
       return {
         id: `${order.tier}-${order.isLong}-${order.epoch}`,
         token,
@@ -261,6 +262,7 @@ function OrdersPage() {
         trailingPercent: tierPercent,
         status: isExecuted ? "triggered" : "active",
         createdAt: new Date().toISOString().split("T")[0],
+        executionPrice,
       } as TrailingStopOrder;
     });
   }, [userOrders]);
@@ -290,19 +292,7 @@ function OrdersPage() {
                   <span className="price-label">
                     Current {formData.tokenToDeposit} Price:
                   </span>
-                  <span className="price-value">
-                    {poolPrices[
-                      formData.tokenToDeposit as keyof typeof poolPrices
-                    ].rate.toLocaleString("en-US", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 6,
-                    })}{" "}
-                    {
-                      poolPrices[
-                        formData.tokenToDeposit as keyof typeof poolPrices
-                      ].pair
-                    }
-                  </span>
+                  <span className="price-value">{currentPrice}</span>
                 </div>
               )}
 
@@ -361,8 +351,7 @@ function OrdersPage() {
                         <span className="radio-percent">5%</span>
                         {formData.tokenToDeposit && (
                           <span className="liquidation-price">
-                            Liq: {liquidationPrices[5].price}{" "}
-                            {liquidationPrices[5].pair}
+                            Exec: {executionPrices[5]}
                           </span>
                         )}
                       </div>
@@ -384,8 +373,7 @@ function OrdersPage() {
                         <span className="radio-percent">10%</span>
                         {formData.tokenToDeposit && (
                           <span className="liquidation-price">
-                            Liq: {liquidationPrices[10].price}{" "}
-                            {liquidationPrices[10].pair}
+                            Exec: {executionPrices[10]}
                           </span>
                         )}
                       </div>
@@ -407,8 +395,7 @@ function OrdersPage() {
                         <span className="radio-percent">15%</span>
                         {formData.tokenToDeposit && (
                           <span className="liquidation-price">
-                            Liq: {liquidationPrices[15].price}{" "}
-                            {liquidationPrices[15].pair}
+                            Exec: {executionPrices[15]}
                           </span>
                         )}
                       </div>
@@ -505,6 +492,15 @@ function OrdersPage() {
                         <span className="detail-label">Trailing %</span>
                         <span className="detail-value">
                           {order.trailingPercent}%
+                        </span>
+                      </div>
+                      <div className="order-detail-item">
+                        <span className="detail-label">Execution Price</span>
+                        <span
+                          className="detail-value"
+                          style={{ fontWeight: 600, color: "#10b981" }}
+                        >
+                          {order.executionPrice || "N/A"}
                         </span>
                       </div>
                       <div className="order-detail-item">

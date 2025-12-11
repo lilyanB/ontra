@@ -18,20 +18,37 @@ Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings ins
 
 ![Stop Loss](delivery/optimizingLiquidity.png)
 
-## Deployment Link:
+## Deployment Addresses
 
-I need to deploy Aave mock because the configuration on sepolia is not working.
-MockAavePool 0xfcAEE36D3df9d2eBf114cfcD0A628a0bbeBA2fBC
+### Sepolia Testnet
 
-Sepolia Testnet:
-OntraV2Hook: 0xf31816Eeb789f4A1C13e8982E85426A9E1e59040
-SwapRouterWithLocker: 0xBD4C0Bea25557683EECCb2c5b7Bb50E3b806896a
-Owner: 0x607A577659Cad2A2799120DfdEEde39De2D38706
-key: struct PoolKey PoolKey({ currency0: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238, currency1: 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9, fee: 0, tickSpacing: 60, hooks: 0xf31816Eeb789f4A1C13e8982E85426A9E1e59040 })
+| Contract                 | Address                                      |
+| ------------------------ | -------------------------------------------- |
+| **OntraV2Hook**          | `0xf31816Eeb789f4A1C13e8982E85426A9E1e59040` |
+| **SwapRouterWithLocker** | `0xBD4C0Bea25557683EECCb2c5b7Bb50E3b806896a` |
+| **MockAavePool**         | `0xfcAEE36D3df9d2eBf114cfcD0A628a0bbeBA2fBC` |
+| **Owner**                | `0x607A577659Cad2A2799120DfdEEde39De2D38706` |
+
+### Pool Configuration
+
+```solidity
+PoolKey({
+    currency0: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238,
+    currency1: 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9,
+    fee: 0,
+    tickSpacing: 60,
+    hooks: 0xf31816Eeb789f4A1C13e8982E85426A9E1e59040
+})
+```
+
+> **Note:** A mock Aave pool was deployed due to configuration issues with the native Aave deployment on Sepolia.
 
 ## Video Demonstration:
 
-![Ontra Demo Video](delivery/OntraHook.mp4)
+<video width="640" height="480" controls>
+  <source src="delivery/OntraHook.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
 
 ## Specifications
 

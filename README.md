@@ -10,6 +10,8 @@ Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings ins
 
 **Implementation Note**: I set aside the initial implementation approach. The functionality to automatically migrate inactive LP positions to Aave is working. However, I moved to version 2 of the protocol, which focuses on trailing stop loss orders. Continuing with the idea of optimizing liquidity, pending positions in trailing stop loss are deposited into Aave and will be put back into Aave after their execution.
 
+No partner integrations
+
 ### Implemented version (Fully working in V2)
 
 ![Stop Loss](delivery/stopLoss.png)

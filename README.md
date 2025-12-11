@@ -7,6 +7,7 @@ Ontra
 ## Description:
 
 Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings institutional-grade execution directly on-chain. The core idea is a Rehypothecation Hook: any LP liquidity or order liquidity that is not currently active is automatically deposited into Aave to earn yield. When liquidity becomes needed again, the Hook withdraws it in a single batch to minimize gas. Ontra provides an on-chain execution layer supporting: Limit orders TWAP orders (30s / 1m / 5m packs) Trailing stop orders (5% / 10% / 15% pools) Hidden orders secured with Fhenix FHE All orders resting in the system earn yield through Aave. Ontra’s goal is simple: professional, efficient, privacy-enabled execution — fully on-chain.
+**Implementation Note**: I set aside the initial implementation approach. The functionality to automatically migrate inactive LP positions to Aave is working. However, I moved to version 2 of the protocol, which focuses on trailing stop loss orders. Continuing with the idea of optimizing liquidity, pending positions in trailing stop loss are deposited into Aave and will be put back into Aave after their execution.
 
 ## Deployment Link:
 
@@ -19,20 +20,11 @@ SwapRouterWithLocker: 0xBD4C0Bea25557683EECCb2c5b7Bb50E3b806896a
 Owner: 0x607A577659Cad2A2799120DfdEEde39De2D38706
 key: struct PoolKey PoolKey({ currency0: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238, currency1: 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9, fee: 0, tickSpacing: 60, hooks: 0xf31816Eeb789f4A1C13e8982E85426A9E1e59040 })
 
-## Documentation
+## Specifications
 
-To view the complete smart contract documentation:
-
-```bash
-forge doc --serve
-```
-
-The documentation will be available at `http://localhost:3000` and includes:
-
-- Complete API reference for all contracts
-- Function signatures and parameters
-- NatSpec comments
-- Contract inheritance diagrams
+- yield generated from Aave deposits during rehypothecation is returned to liquidity providers
+- trailing stop lost orders are deposited into Aave until triggered and the generated yield is returned to the order placer
+- executed trailing stop lost are also deposited into Aave until withdrawn by the order placer. Generated yield is returned to the owner
 
 ## Todo List
 
@@ -62,8 +54,17 @@ Outside of scope for the Hookathon:
 - [ ] Increase aave integration (verify if tokens is supported for example)
 - [ ] Security audit
 
-## Specifications
+## Documentation
 
-- yield generated from Aave deposits during rehypothecation is returned to liquidity providers
-- trailing stop lost orders are deposited into Aave until triggered and the generated yield is returned to the order placer
-- executed trailing stop lost are also deposited into Aave until withdrawn by the order placer. Generated yield is returned to the owner
+To view the complete smart contract documentation:
+
+```bash
+forge doc --serve
+```
+
+The documentation will be available at `http://localhost:3000` and includes:
+
+- Complete API reference for all contracts
+- Function signatures and parameters
+- NatSpec comments
+- Contract inheritance diagrams

@@ -55,6 +55,12 @@ Outside of scope for the Hookathon:
 - [ ] Implement TWAP Orders
 - [ ] Implement Limit Orders
 
+### Before production
+
+- [ ] Extensive testing
+- [ ] Increase aave integration (verify if tokens is supported for example)
+- [ ] Security audit
+
 ## Specifications
 
 - yield generated from Aave deposits during rehypothecation is returned to liquidity providers

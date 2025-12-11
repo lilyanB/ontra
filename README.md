@@ -40,11 +40,11 @@ key: struct PoolKey PoolKey({ currency0: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7
 - [x] Implement addLiquidity with Aave integration
 - [x] Implement removeLiquidity with Aave integration
 - [x] Implement rebalanceToAave function
-- [x] Implement Trailing Stop Orders
+- [x] Implement Trailing Stop Orders with Aave integration-
+- [x] Write comprehensive tests
 - [x] Solidity coverage above 90%
 - [ ] Implement cancelOrder function
 - [ ] Integrate Fhenix FHE for Hidden Orders
-- [x] Write comprehensive tests
 - [x] Prepare documentation
 - [x] Deploy to testnet
 - [x] Implement front-end interface

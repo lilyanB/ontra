@@ -12,11 +12,11 @@ Ontra — The On-Chain Trading Engine Ontra is a Uniswap v4 Hook that brings ins
 
 ### Implemented version (Fully working in V2)
 
-![Stop Loss](screen/stopLoss.png)
+![Stop Loss](delivery/stopLoss.png)
 
 ### Initial Goal (partially implemented in V1)
 
-![Stop Loss](screen/optimizingLiquidity.png)
+![Stop Loss](delivery/optimizingLiquidity.png)
 
 ## Deployment Link:
 
@@ -28,6 +28,10 @@ OntraV2Hook: 0xf31816Eeb789f4A1C13e8982E85426A9E1e59040
 SwapRouterWithLocker: 0xBD4C0Bea25557683EECCb2c5b7Bb50E3b806896a
 Owner: 0x607A577659Cad2A2799120DfdEEde39De2D38706
 key: struct PoolKey PoolKey({ currency0: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238, currency1: 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9, fee: 0, tickSpacing: 60, hooks: 0xf31816Eeb789f4A1C13e8982E85426A9E1e59040 })
+
+## Video Demonstration:
+
+![Ontra Demo Video](delivery/OntraHook.mp4)
 
 ## Specifications
 

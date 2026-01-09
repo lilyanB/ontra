@@ -18,8 +18,8 @@ import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 import {OntraV2Hook} from "../src/OntraV2Hook.sol";
 import {SwapRouterWithLocker} from "../test/unit/utils/SwapRouterWithLocker.sol";
 
-// Base Mainnet
-// forge script script/OntraV2Hook.s.sol:OntraV2HookScript --sig "run(address)" $AAVE_POOL_ADDRESS --rpc-url https://mainnet.base.org -i 1 --broadcast
+// Unichain
+// forge script script/OntraV2Hook.s.sol:OntraV2HookScript --sig "run(address,address,address)" 0xE170cC294B5a46842676c4dAc508b4A82E5fF25c 0x98A3e664c2D7B44d7326Fb8D61C217e60CBC05aa 0xf4175c50f958b65627E8D31DCa0C63813e7e6dCA --rpc-url https://unichain-sepolia-rpc.publicnode.com --sender 0x607A577659Cad2A2799120DfdEEde39De2D38706 -i 1 --broadcast
 
 // Sepolia
 // forge script script/OntraV2Hook.s.sol:OntraV2HookScript --sig "run(address,address,address)" 0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9 --rpc-url wss://ethereum-sepolia-rpc.publicnode.com -i 1 --broadcast
@@ -28,7 +28,9 @@ contract OntraV2HookScript is Script {
     // https://getfoundry.sh/guides/deterministic-deployments-using-create2/#getting-started
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     // https://docs.uniswap.org/contracts/v4/deployments#sepolia-11155111
-    address internal constant POOL_MANAGER = 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
+    // address internal constant POOL_MANAGER = 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
+    //https://docs.uniswap.org/contracts/v4/deployments#unichain-sepolia-1301
+    address internal constant POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
     // SQRT_PRICE_1_1 = sqrt(1) * 2^96 = 79228162514264337593543950336
     uint160 internal constant SQRT_PRICE_1_1 = 79228162514264337593543950336;
     bytes internal constant ZERO_BYTES = "";

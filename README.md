@@ -24,6 +24,29 @@ No partner integrations
 
 ## Deployment Addresses
 
+### Unichain
+
+| Contract                 | Address                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| **OntraV2Hook**          | [`0x596917E585f863eEAB27E84a7195d6a8ac2BD040`](https://sepolia.uniscan.xyz/address/0x596917E585f863eEAB27E84a7195d6a8ac2BD040) |
+| **SwapRouterWithLocker** | `0xfA777F63cb37a2cBF387e00B5eb9Da7C434a051D`                                                                                   |
+| **MockAavePool**         | `0xE170cC294B5a46842676c4dAc508b4A82E5fF25c`                                                                                   |
+| **MockUSDC**             | `0x98A3e664c2D7B44d7326Fb8D61C217e60CBC05aa`                                                                                   |
+| **MockWETH**             | `0xf4175c50f958b65627E8D31DCa0C63813e7e6dCA`                                                                                   |
+| **Owner**                | `0x607A577659Cad2A2799120DfdEEde39De2D38706`                                                                                   |
+
+#### Pool Configuration
+
+```solidity
+PoolKey({
+    currency0: 0x98A3e664c2D7B44d7326Fb8D61C217e60CBC05aa,
+    currency1: 0xf4175c50f958b65627E8D31DCa0C63813e7e6dCA,
+    fee: 0,
+    tickSpacing: 60,
+    hooks: 0x596917E585f863eEAB27E84a7195d6a8ac2BD040
+    })
+```
+
 ### Sepolia Testnet
 
 | Contract                 | Address                                      |
@@ -33,7 +56,7 @@ No partner integrations
 | **MockAavePool**         | `0xfcAEE36D3df9d2eBf114cfcD0A628a0bbeBA2fBC` |
 | **Owner**                | `0x607A577659Cad2A2799120DfdEEde39De2D38706` |
 
-### Pool Configuration
+#### Pool Configuration
 
 ```solidity
 PoolKey({
